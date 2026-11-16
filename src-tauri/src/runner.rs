@@ -223,6 +223,14 @@ impl Runner {
         cmd.stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // 强制英文输出：状态机（Connected as / CSTP connected）与故障分类均按
+        // openconnect 的英文原文匹配。openconnect 带 gettext 翻译且翻译目录路径
+        // 编译期写死，系统为中文时会输出「已配置为…」，导致状态停在「握手中」。
+        // LANGUAGE 优先级高于 LC_ALL，必须一并清除。
+        cmd.env("LC_ALL", "C")
+            .env("LC_MESSAGES", "C")
+            .env("LANG", "C")
+            .env_remove("LANGUAGE");
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -517,6 +525,12 @@ fn classify(text: &str) -> (&'static str, Option<&'static str>) {
     {
         return ("error", Some("handshake"));
     }
+    // 成功标志：必须先于 DTLS 判断。成功行形如
+    // "Connected as 10.x, using SSL, with DTLS disabled"，含 "dtls" 字样，
+    // 若后判断会被误归为 DTLS 信息行而不显示为成功。
+    if has("connected as") || has("esp session established") {
+        return ("success", None);
+    }
     // DTLS 相关（降级为警告，不阻断连接）
     if has("dtls") {
         if has("failed") || has("not") || has("downgrade") || has("fallback") {
@@ -524,16 +538,18 @@ fn classify(text: &str) -> (&'static str, Option<&'static str>) {
         }
         return ("info", Some("dtls"));
     }
-    // 路由 / DNS
-    if has("add route") || has("route to") || has("default route") {
+    // 路由 / DNS。vpnc-script 在 macOS 上输出 "add net x: gateway y"，
+    // 在 Linux 上为 "add route"
+    if has("add route")
+        || has("add net ")
+        || has("add host ")
+        || has("route to")
+        || has("default route")
+    {
         return ("info", Some("route"));
     }
     if has("dns") && (has("fail") || has("error")) {
         return ("warn", Some("dns"));
-    }
-    // 成功标志
-    if has("connected as") || has("esp session established") {
-        return ("success", None);
     }
     if has("failed") || has("error") || has("fatal") {
         return ("error", None);
@@ -674,3 +690,33 @@ fn spawn_error_hint(e: &std::io::Error, bin: &Path) -> String {
 /// openconnect 退出码速查（README 与关于页同步引用）。
 pub const EXIT_CODE_HINT: &str =
     "openconnect 退出码：1=参数错误，2=连接/认证失败；其余见 openconnect 手册。";
+#[cfg(test)]
+mod tests {
+    use super::classify;
+
+    /// 回归用例取自真实网关日志（英文环境下的 openconnect 9.21 输出）。
+    #[test]
+    fn classifies_real_anyconnect_session() {
+        assert_eq!(
+            classify("Server certificate verify failed: signer not found"),
+            ("error", Some("cert"))
+        );
+        assert_eq!(
+            classify("Connected as 10.255.225.16, using SSL, with DTLS disabled"),
+            ("success", None)
+        );
+        assert_eq!(
+            classify("Failed to connect DTLS tunnel; using HTTPS instead"),
+            ("warn", Some("dtls"))
+        );
+        assert_eq!(classify("add net 10.0.0.0: gateway 10.255.225.16").1, Some("route"));
+        assert_eq!(classify("Login failed.").1, Some("auth"));
+    }
+
+    /// 中文输出不应被误判为成功——这正是本次缺陷的成因，
+    /// 修复方式是在子进程层面强制 LC_ALL=C，而不是让分类器去适配多语言。
+    #[test]
+    fn localized_output_is_not_recognized() {
+        assert_ne!(classify("已配置为 10.255.225.16，使用 SSL 已连接").0, "success");
+    }
+}
