@@ -89,6 +89,7 @@ octauri/
         ├── runner.rs            子进程生命周期 / 日志泵 / 信号终止
         ├── probe.rs             跨平台环境探测
         ├── store.rs             JSON 持久化
+        ├── single.rs            单实例锁（本机回环端口 + 握手）
         ├── prefs.rs             全局偏好
         └── model.rs             数据模型
 ```
@@ -145,7 +146,7 @@ sudo apt install openconnect
 ```bash
 npm install
 npm run icons        # 仅在需要重新生成图标时执行（需要 python3）
-npm run dev          # 开发模式（热重载）
+OCTAURI_NO_ELEVATE=1 npm run dev   # 开发模式（热重载）；macOS 下跳过自动提权，免得每次输密码
 npm run build        # 生产构建 + 打包当前平台安装包
 npm run typecheck    # 前端类型检查
 ```
@@ -274,7 +275,11 @@ public 仓库 Actions 分钟数不限；private 仓库 macOS runner 按 10 倍�
 
 程序**不会**自行修改 sudoers、不会静默提权、不会写入系统目录。
 macOS 的提权走系统原生 `osascript ... with administrator privileges`，即系统标准密码框，
-权限不会驻留——每次启动都需要确认一次。
+权限不会驻留——每次启动都需要确认一次。授权通过后 root 实例在后台运行，
+负责弹框的启动器立即退出，不会残留进程。
+
+开发调试时可设置 `OCTAURI_NO_ELEVATE=1` 跳过自动提权（此时无法建立真实隧道，
+配合 `scripts/mock-openconnect.sh` 使用）。
 
 macOS 提权后进程以 root 运行，但配置文件仍然写到**真实登录用户**的
 `~/Library/Application Support/`（通过 `stat -f %Su /dev/console` 定位），
@@ -438,9 +443,13 @@ npx tauri build --bundles nsis
    `--token-mode=...` 或改用证书认证规避。
 2. **密码模式仅支持 `--passwd-on-stdin` 一次性投喂**，不处理多轮质询。
 3. **不提供流量统计、分应用分流、自动重连**。这些均属协议层/系统层能力，超出外壳定位。
-4. **单实例**：未做单实例锁，重复启动会得到多个托盘图标（连接互不干扰）。
-5. macOS / Linux 不捆绑 openconnect 二进制，依赖系统部署（这是有意的选择，
-   避免 LGPL 二进制分发与版本维护负担）。
+4. **单实例**：通过本机回环端口 `127.0.0.1:28417` 实现，重复启动会唤起已有窗口后退出。
+   - macOS：检测在弹密码框之前，已运行时再次双击**不会**再弹密码框
+   - Windows：`requireAdministrator` 清单使 UAC 弹窗先于任何代码执行，
+     因此重复双击仍会弹一次 UAC，通过后唤起已有窗口并退出，不会出现两个实例
+   - 若该端口被其他程序占用，程序照常启动，只是本次运行不启用单实例保护
+5. **Linux 不捆绑 openconnect**，依赖发行版包管理器安装。Windows 与 macOS（arm64）
+   已内置，见第 6 节。
 
 ---
 

@@ -9,6 +9,7 @@ mod model;
 mod prefs;
 mod probe;
 mod runner;
+mod single;
 mod store;
 
 use std::sync::Arc;
@@ -36,9 +37,19 @@ fn relaunch_as_root_if_needed() -> bool {
         return false;
     };
 
+    // 开发调试用：OCTAURI_NO_ELEVATE=1 时跳过自动提权（npm run dev 不必每次输密码）
+    if std::env::var_os("OCTAURI_NO_ELEVATE").is_some() {
+        return false;
+    }
+
     // AppleScript 字符串里的单引号需转义：' -> '\''
     let path = exe.to_string_lossy().replace('\'', r#"'\''"#);
-    let script = format!(r#"do shell script "'{path}'" with administrator privileges"#);
+    // 末尾 `> /dev/null 2>&1 &`：在后台拉起 root 实例。
+    // do shell script 只有在输出被重定向时才不等待后台进程，
+    // 这样授权通过后 osascript 立即返回，启动器随即退出，不会残留进程。
+    let script = format!(
+        r#"do shell script "'{path}' > /dev/null 2>&1 &" with administrator privileges"#
+    );
 
     let ok = std::process::Command::new("osascript")
         .arg("-e")
@@ -181,15 +192,34 @@ fn setup_window(app: &tauri::App) {
 }
 
 pub fn run() {
-    // macOS：非 root 时用系统密码框重新拉起自己，随后当前实例退出
+    // 1) 单实例：已有实例时唤起其窗口后直接退出。
+    //    放在提权之前，避免已运行时再次双击还弹一次密码框。
+    if single::notify_existing(single::PORT) {
+        std::process::exit(0);
+    }
+
+    // 2) macOS：非 root 时用系统密码框在后台拉起 root 实例，当前实例退出
     #[cfg(target_os = "macos")]
     if relaunch_as_root_if_needed() {
         std::process::exit(0);
     }
 
+    // 3) 占用单实例端口。被其他程序占用时仍可启动，只是没有单实例保护
+    let mut instance_listener = single::bind(single::PORT);
+    if instance_listener.is_none() {
+        eprintln!(
+            "[octauri] 单实例端口 127.0.0.1:{} 被占用，本次运行不启用单实例保护",
+            single::PORT
+        );
+    }
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .setup(|app| {
+        .setup(move |app| {
+            if let Some(listener) = instance_listener.take() {
+                let handle = app.handle().clone();
+                single::serve(listener, move || show_main(&handle));
+            }
             let dir = resolve_data_dir(app);
             let _ = std::fs::create_dir_all(&dir);
             app.manage(AppState {
