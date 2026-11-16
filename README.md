@@ -52,7 +52,8 @@ octauri/
 ├── scripts/
 │   ├── gen-icons.py                 零依赖图标生成（PNG/ICO/ICNS）
 │   ├── bundle-openconnect-macos.sh  生成 macOS 自包含运行时（重写 install_name + 重签名）
-│   └── mock-openconnect.sh          假 openconnect，无网关时本地联调
+│   ├── mock-openconnect.sh          假 openconnect，无网关时本地联调
+│   └── build-openconnect-windows.sh 在 Windows 上编译并收集运行时（MSYS2）
 ├── src/                         Vue 3 前端
 │   ├── main.ts
 │   ├── App.vue                  页面切换（连接 / 诊断）/ 对话框编排
@@ -409,12 +410,29 @@ brew install openconnect
 openconnect 调用时通过 SetupAPI 自动完成注册——用户不需要下载驱动、不需要
 运行安装程序、不需要手动配置，只会在第一次连接时看到一次 UAC 提权弹窗。
 
-你需要自行补两个文件到同一目录：
+openconnect 本体需要自行编译后放入同一目录。**官方不提供 Windows 预编译
+二进制**（GitLab releases 只有源码包，MSYS2 仓库也没有该包），因此仓库提供了
+一键编译脚本：
 
-1. `openconnect.exe` 及依赖 DLL（`libssl-3-x64.dll`、`libcrypto-3-x64.dll`、
-   `libp11-kit-0.dll` 等，视你的构建而定）
-2. `vpnc-script-win.js` —— **必需**。openconnect 靠它配置路由与 DNS。
-   缺失时 openconnect 会报 `vpnc-script not found`，隧道虽建立但流量不通。
+```bash
+# 在 MSYS2 的 "MINGW64" 终端中，于仓库根目录执行
+./scripts/build-openconnect-windows.sh
+```
+
+脚本会下载指定版本的源码（默认 9.21，可用 `OPENCONNECT_VERSION` 覆盖）、
+用 OpenSSL 后端编译、递归收集全部依赖 DLL、校验无缺失依赖，并检查产物是
+x86-64（必须与内置的 amd64 `wintun.dll` 一致）。
+
+首次运行会列出缺少的 pacman 包，装完再跑一次即可。产物 `windows-runtime/`
+里的文件全部拷入 `src-tauri/resources/openconnect/` 后提交。
+
+其中 `vpnc-script-win.js` 来自 `mingw-w64-x86_64-vpnc-scripts` —— **必需**。
+openconnect 靠它配置路由与 DNS，缺失时会报 `vpnc-script not found`，
+隧道虽建立但流量不通。
+
+> 历史说明：`openconnect-gui` 项目发布过 2019 年的 `win32` 安装包，内含旧版
+> openconnect。**不要使用**：它是 32 位（无法加载 amd64 的 `wintun.dll`），
+> 且版本停留在 8.x 时代，与现代网关的兼容性没有保证。
 
 `wintun.dll` 无需处理。若要支持 Windows on ARM，用 wintun.net 压缩包里的
 `bin/arm64/wintun.dll` 替换同名文件即可。
