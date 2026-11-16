@@ -426,6 +426,29 @@ impl Runner {
         }
         Ok(())
     }
+
+    /// 程序退出前同步清理子进程（阻塞，最多约 3 秒）。
+    ///
+    /// openconnect 是独立进程，GUI 退出时不会随之结束：它会变成孤儿进程，
+    /// 隧道、路由、DNS 全部保留，而且以 root 运行，用户只能 sudo kill 清理。
+    /// 先发 SIGTERM，让 openconnect 调用 vpnc-script 还原路由与 DNS；
+    /// 超时后再发 SIGKILL。
+    pub fn shutdown(&self) {
+        let Some(pid) = self.running_pid() else {
+            return;
+        };
+        self.user_stop.store(true, Ordering::SeqCst);
+        let _ = terminate(pid, false);
+        // 等待回收线程把 pid 清零（即子进程已退出）
+        for _ in 0..30 {
+            if self.running_pid() != Some(pid) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let _ = terminate(pid, true);
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
 }
 
 /// 查找与 openconnect 同目录的附带文件（数据文件，不需要可执行位）。
@@ -745,6 +768,58 @@ mod tests {
 
     /// 中文输出不应被误判为成功——这正是本次缺陷的成因，
     /// 修复方式是在子进程层面强制 LC_ALL=C，而不是让分类器去适配多语言。
+    /// 模拟 spawn + 回收线程，返回子进程 pid 与「是否已退出」探针
+    #[cfg(unix)]
+    fn spawn_tracked(runner: &std::sync::Arc<super::Runner>, script: &str) -> u32 {
+        use std::sync::atomic::Ordering;
+        let mut child = std::process::Command::new("sh").arg("-c").arg(script).spawn().unwrap();
+        let pid = child.id();
+        runner.pid.store(pid, Ordering::SeqCst);
+        let r = runner.clone();
+        std::thread::spawn(move || {
+            let _ = child.wait();
+            r.pid.store(0, Ordering::SeqCst);
+        });
+        pid
+    }
+
+    #[cfg(unix)]
+    fn alive(pid: u32) -> bool {
+        unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
+    }
+
+    /// 正常响应 SIGTERM 的子进程：shutdown 应很快返回且进程已结束
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_terminates_cooperative_child() {
+        let _g = crate::test_lock();
+        let runner = super::Runner::new();
+        let pid = spawn_tracked(&runner, "exec sleep 30");
+        let t = std::time::Instant::now();
+        runner.shutdown();
+        assert!(!alive(pid), "子进程应已退出");
+        assert!(t.elapsed().as_millis() < 1500, "不应等到超时");
+        assert_eq!(runner.running_pid(), None);
+    }
+
+    /// 忽略 SIGTERM 的子进程（模拟卡死的 openconnect）：超时后应被 SIGKILL
+    #[cfg(unix)]
+    #[test]
+    fn shutdown_kills_child_ignoring_sigterm() {
+        let _g = crate::test_lock();
+        let runner = super::Runner::new();
+        let pid = spawn_tracked(&runner, "trap '' TERM; while :; do sleep 0.1; done");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        runner.shutdown();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert!(!alive(pid), "忽略 SIGTERM 的子进程应被强制结束");
+    }
+
+    #[test]
+    fn shutdown_without_child_is_noop() {
+        super::Runner::new().shutdown();
+    }
+
     #[test]
     fn classifies_openconnect_921_configured_line() {
         assert_eq!(

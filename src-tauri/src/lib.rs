@@ -10,6 +10,8 @@ mod model;
 mod prefs;
 mod probe;
 mod runner;
+#[cfg(unix)]
+mod signals;
 mod single;
 mod store;
 
@@ -19,6 +21,16 @@ use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent}
 use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 
 use commands::AppState;
+
+/// 测试专用：串行化「fork 子进程」与「绑定端口」的测试。
+/// macOS 上 socket 创建与设置 CLOEXEC 之间有窗口期，并发 fork 会让子进程继承端口。
+#[cfg(test)]
+pub(crate) static TEST_PROC_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
+    TEST_PROC_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
 use runner::Runner;
 
 // ---------------------------------------------------------------
@@ -283,6 +295,8 @@ pub fn run() {
             });
             setup_tray(app)?;
             setup_window(app);
+            #[cfg(unix)]
+            signals::install(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -308,6 +322,14 @@ pub fn run() {
         .expect("failed to build tauri application");
 
     app.run(|app_handle, event| {
+        // 所有退出路径（托盘「退出」、Cmd+Q、菜单「退出 Octauri」）最终都会到这里：
+        // 先结束 openconnect 子进程，否则它会以 root 孤儿进程残留，隧道也不会断开
+        if let RunEvent::Exit = event {
+            if let Some(state) = app_handle.try_state::<AppState>() {
+                state.runner.shutdown();
+            }
+            return;
+        }
         // macOS 点击 Dock 图标时重新显示窗口
         #[cfg(target_os = "macos")]
         if let RunEvent::Reopen {
@@ -318,10 +340,6 @@ pub fn run() {
             if !has_visible_windows {
                 show_main(app_handle);
             }
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = (app_handle, event);
         }
     });
 }

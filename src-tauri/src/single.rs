@@ -86,11 +86,13 @@ mod tests {
 
     #[test]
     fn no_instance_returns_false() {
+        let _g = crate::test_lock();
         assert!(!notify_existing(free_port()));
     }
 
     #[test]
     fn running_instance_is_notified() {
+        let _g = crate::test_lock();
         let port = free_port();
         let listener = bind(port).expect("bind");
         let hits = Arc::new(AtomicUsize::new(0));
@@ -107,6 +109,7 @@ mod tests {
 
     #[test]
     fn second_bind_fails() {
+        let _g = crate::test_lock();
         let port = free_port();
         let _first = bind(port).expect("bind");
         assert!(bind(port).is_none());
@@ -114,6 +117,7 @@ mod tests {
 
     #[test]
     fn foreign_service_is_not_mistaken_for_instance() {
+        let _g = crate::test_lock();
         let port = free_port();
         let listener = TcpListener::bind(addr(port)).unwrap();
         std::thread::spawn(move || {

@@ -92,6 +92,7 @@ octauri/
         ├── store.rs             JSON 持久化
         ├── single.rs            单实例锁（本机回环端口 + 握手）
         ├── clipboard.rs         剪贴板写入（root 运行时切回登录用户会话）
+        ├── signals.rs           SIGTERM/SIGINT/SIGHUP 转为正常退出（Unix）
         ├── prefs.rs             全局偏好
         └── model.rs             数据模型
 ```
@@ -439,6 +440,7 @@ npx tauri build --bundles nsis
 | 日志出现 `certificate verify failed` | 服务端证书不被信任（自签 / 中间证书缺失 / 时钟偏差） | 校时、补全 CA，或谨慎使用 `--servercert pin-sha256:...` |
 | 日志出现 `Login failed` / `401` | 账号密码错误或认证方式不匹配 | 核对凭据；证书模式勿勾选密码 |
 | 进程不退、端口占用 | openconnect 卡在 teardown | 点「强制终止」（SIGKILL / `taskkill /F /T`） |
+| 退出 Octauri 后仍有 root 进程残留 | 1.0 早期版本退出时未结束 openconnect 子进程 | 已修复：任何退出路径（托盘、Cmd+Q、SIGTERM/SIGINT/SIGHUP）都会先 SIGTERM openconnect，3 秒未退再 SIGKILL。若仍残留可 `sudo pkill -f Octauri.app` |
 | 日志出现 `** Error: The parameters were not valid.` | 原版 vpnc-script 在全隧道下查不到网络服务名（macOS） | 内置脚本已修复。若用自定义 openconnect，DNS 实际已由 scutil 配好，该报错可忽略 |
 | macOS 关闭窗口后程序仍在 | 这是设计行为 | 托盘右键「退出」或 Cmd+Q 退出 |
 
