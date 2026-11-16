@@ -225,6 +225,12 @@ pub fn force_kill(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
     state.runner.stop(&app, true)
 }
 
+/// 配置目录状态：不可写时前端明确提示怎么修（多为旧版以 root 运行的遗留）。
+#[tauri::command]
+pub fn data_dir_status(state: State<'_, AppState>) -> serde_json::Value {
+    state.store.dir_status()
+}
+
 /// root 辅助进程（macOS）是否就绪。GUI 以普通用户运行时，
 /// 连接能力依赖它；未就绪且用户已取消授权时，前端给出明确提示。
 #[tauri::command]

@@ -25,6 +25,41 @@ impl Store {
         Self { dir }
     }
 
+    /// 配置目录的可用性：能否写、是否属于其他用户（旧版以 root 运行的遗留）。
+    ///
+    /// 这种遗留会让「添加配置」直接失败、已有配置也读不出来，
+    /// 但程序自身没有权限修复，只能引导用户执行一次 chown。
+    pub fn dir_status(&self) -> serde_json::Value {
+        let path = self.dir.display().to_string();
+        let exists = self.dir.is_dir();
+        let writable = if exists {
+            let probe = self.dir.join(".octauri-write-test");
+            match std::fs::write(&probe, b"x") {
+                Ok(()) => {
+                    let _ = std::fs::remove_file(&probe);
+                    true
+                }
+                Err(_) => false,
+            }
+        } else {
+            std::fs::create_dir_all(&self.dir).is_ok()
+        };
+        #[cfg(unix)]
+        let foreign_owner = {
+            use std::os::unix::fs::MetadataExt;
+            std::fs::metadata(&self.dir)
+                .map(|m| m.uid() != unsafe { libc::geteuid() })
+                .unwrap_or(false)
+        };
+        #[cfg(not(unix))]
+        let foreign_owner = false;
+        serde_json::json!({
+            "path": path,
+            "writable": writable,
+            "foreignOwner": foreign_owner,
+        })
+    }
+
     fn file(&self) -> PathBuf {
         self.dir.join(FILE_NAME)
     }
@@ -50,8 +85,7 @@ impl Store {
 
     /// 原子写入：先写临时文件再 rename，避免断电/崩溃导致文件截断。
     pub fn save_all(&self, profiles: &[Profile]) -> Result<(), String> {
-        std::fs::create_dir_all(&self.dir)
-            .map_err(|e| format!("创建配置目录失败：{e}"))?;
+        std::fs::create_dir_all(&self.dir).map_err(|e| write_error(&e, &self.dir))?;
         let file = StoreFile {
             version: 1,
             profiles: profiles.to_vec(),
@@ -59,10 +93,10 @@ impl Store {
         let json = serde_json::to_string_pretty(&file)
             .map_err(|e| format!("序列化配置失败：{e}"))?;
         let tmp = self.dir.join(format!("{FILE_NAME}.tmp"));
-        std::fs::write(&tmp, json).map_err(|e| format!("写入配置失败：{e}"))?;
+        std::fs::write(&tmp, json).map_err(|e| write_error(&e, &self.dir))?;
         std::fs::rename(&tmp, self.file()).map_err(|e| {
             let _ = std::fs::remove_file(&tmp);
-            format!("保存配置失败：{e}")
+            write_error(&e, &self.dir)
         })?;
         restrict_permissions(&self.file());
         Ok(())
@@ -204,4 +238,22 @@ pub fn new_id() -> String {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     format!("p{:x}{:x}", nanos, n)
+}
+
+/// 写入失败时的可操作提示。
+///
+/// 典型场景：早期版本以 root 运行，把配置目录建成了 root 所有，
+/// 之后 GUI 改回普通用户就再也写不进去（`Permission denied`）。
+/// 这种问题程序自身无法修复（需要更高的权限），必须明确告诉用户怎么做。
+fn write_error(e: &std::io::Error, dir: &std::path::Path) -> String {
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        return format!(
+            "没有写入配置的权限：{e}\n\
+             该目录可能由旧版本以管理员身份运行时创建，属主是 root。\n\
+             在终端执行一次后重试：\n\
+             sudo chown -R \"$(id -un)\" \"{}\"",
+            dir.display()
+        );
+    }
+    format!("写入配置失败：{e}")
 }

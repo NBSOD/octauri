@@ -16,6 +16,13 @@ import {
  * 辅助进程提示：授权失败时说明原因并提示重启；
  * 授权进行中时提示用户在弹出的系统窗口里输入密码。
  */
+/** 配置目录不可写：多为旧版本以 root 运行时留下的属主问题 */
+const dataDirNotice = computed(() => {
+  const issue = state.dataDirIssue;
+  if (!issue) return null;
+  return `配置目录不可写（${issue.path}），保存会失败。请在终端执行一次后重启本程序：${issue.fix}`;
+});
+
 const helperNotice = computed(() => {
   if (state.helper.state === "error") {
     return {
@@ -92,7 +99,11 @@ function goDiag() {
   <section class="home">
     <!-- macOS：GUI 以普通用户运行，openconnect 由 root 辅助进程拉起。
          用户取消授权或辅助进程未就绪时，这里给出明确原因与处置办法。 -->
-    <div v-if="helperNotice" class="home-banner" :class="helperNotice.level">
+    <div v-if="dataDirNotice" class="home-banner error">
+      <Icon name="shield" :size="14" />
+      <span>{{ dataDirNotice }}</span>
+    </div>
+    <div v-else-if="helperNotice" class="home-banner" :class="helperNotice.level">
       <Icon name="shield" :size="14" />
       <span>{{ helperNotice.text }}</span>
     </div>

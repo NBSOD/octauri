@@ -37,6 +37,9 @@ export const api = {
   disconnect: () => invoke<void>("disconnect"),
   forceKill: () => invoke<void>("force_kill"),
 
+  dataDirStatus: () =>
+    invoke<{ path: string; writable: boolean; foreignOwner: boolean }>("data_dir_status"),
+
   helperStatus: () => invoke<{ state: "ready" | "starting"; error: string }>("helper_status"),
 
   connState: () => invoke<StateSnapshot>("conn_state"),

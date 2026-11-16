@@ -501,6 +501,7 @@ npx tauri build --bundles nsis
 | 退出 Octauri 后仍有 root 进程残留 | 1.0 早期版本退出时未结束 openconnect 子进程 | 已修复：任何退出路径（托盘、Cmd+Q、SIGTERM/SIGINT/SIGHUP）都会先 SIGTERM openconnect，3 秒未退再 SIGKILL。若仍残留可 `sudo pkill -f Octauri.app` |
 | 日志出现 `** Error: The parameters were not valid.` | 原版 vpnc-script 在全隧道下查不到网络服务名（macOS） | 内置脚本已修复。若用自定义 openconnect，DNS 实际已由 scutil 配好，该报错可忽略 |
 | macOS 关闭窗口后程序仍在 | 这是设计行为 | 托盘右键「退出」或 Cmd+Q 退出 |
+| 保存配置报 `Permission denied (os error 13)` | 配置目录属主是 root（旧版以 root 运行的遗留），普通用户无权写入 | 程序会在首页提示修复命令，执行一次即可：`sudo chown -R "$(id -un)" "$HOME/Library/Application Support/io.github.nbsod.octauri"` |
 | macOS 首页提示「无法建立管理员授权」 | 启动时取消了系统密码框 | 退出 Octauri 重新打开，在弹窗中允许；辅助进程只在启动时授权一次 |
 | macOS 退出后仍残留 `octauri --helper` | 1.0 早期版本的 GUI 本身是 root，系统无法终止 | 已改为「普通 GUI + root 辅助进程」。GUI 退出（含强制退出）会关闭 socket，辅助进程随之清理 openconnect 并退出 |
 

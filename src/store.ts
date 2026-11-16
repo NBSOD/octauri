@@ -69,6 +69,8 @@ export const state = reactive({
     state: "starting" as "starting" | "ready" | "error",
     error: "",
   },
+  /** 配置目录不可写时的信息（旧版以 root 运行的遗留） */
+  dataDirIssue: null as { path: string; fix: string } | null,
 });
 
 export const selectedProfile = computed<Profile | null>(
@@ -200,6 +202,21 @@ export async function initApp() {
   } catch {
     /* 保持默认 starting */
   }
+  // 配置目录自检：不可写时后续所有保存都会失败，提前把原因和修法摆出来
+  try {
+    const ds = await api.dataDirStatus();
+    if (!ds.writable) {
+      state.dataDirIssue = {
+        path: ds.path,
+        fix: ds.foreignOwner
+          ? `sudo chown -R "$(id -un)" "${ds.path}"`
+          : `chmod u+w "${ds.path}"`,
+      };
+    }
+  } catch {
+    /* 自检失败不影响使用 */
+  }
+
   state.ready = true;
 }
 

@@ -351,6 +351,7 @@ pub fn run() {
             commands::force_kill,
             commands::conn_state,
             commands::helper_status,
+            commands::data_dir_status,
             commands::logs_tail,
             commands::logs_clear,
             commands::logs_export,

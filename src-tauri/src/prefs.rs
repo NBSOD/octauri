@@ -60,8 +60,8 @@ impl Prefs {
         let json = serde_json::to_string_pretty(&value)
             .map_err(|e| format!("序列化设置失败：{e}"))?;
         let tmp = self.file.with_extension("json.tmp");
-        std::fs::write(&tmp, json).map_err(|e| format!("写入设置失败：{e}"))?;
-        std::fs::rename(&tmp, &self.file).map_err(|e| format!("保存设置失败：{e}"))?;
+        std::fs::write(&tmp, json).map_err(|e| settings_error(&e))?;
+        std::fs::rename(&tmp, &self.file).map_err(|e| settings_error(&e))?;
         Ok(value)
     }
 }
@@ -77,4 +77,16 @@ pub fn prefs_set(
     prefs: PrefsData,
 ) -> Result<PrefsData, String> {
     state.prefs.set(prefs)
+}
+
+fn settings_error(e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        return format!(
+            "没有写入设置的权限：{e}\n\
+             配置目录可能由旧版本以管理员身份运行时创建，属主是 root。\n\
+             在终端执行一次后重试：\n\
+             sudo chown -R \"$(id -un)\" \"$HOME/Library/Application Support/io.github.nbsod.octauri\""
+        );
+    }
+    format!("保存设置失败：{e}")
 }
