@@ -29,7 +29,7 @@ Windows / macOS / Linux 三端。
 | 模块 | 能力 |
 | --- | --- |
 | 多配置管理 | 本地 JSON 持久化；新建 / 编辑 / 删除 / 导入 / 导出；每配置独立可执行文件路径与额外参数 |
-| 凭据 | 密码存入系统钥匙串（macOS Keychain / Windows 凭据管理器 / Linux Secret Service），JSON 中不落明文；或每次连接手动输入 |
+| 凭据 | **密码不落盘**：只保存网关与账号，每次连接弹窗输入，经 stdin 传给 openconnect |
 | 连接控制 | 一键连接 / 断开；优雅终止（SIGTERM）→ 6 秒宽限 → 强制 SIGKILL；独立「强制终止」按钮处理卡死进程 |
 | 状态可视化 | 未连接 → 握手进行中 → 已连通 → 异常断开；含连接时长、pid、握手超时提醒 |
 | 实时日志 | 流式输出；证书 / 认证 / 握手 / DTLS / 路由 标签着色；关键字检索与高亮；一键复制全部；导出到文件；前后端双重缓冲上限 |
@@ -88,7 +88,7 @@ octauri/
         ├── commands.rs          Tauri 命令层（唯一后端入口）
         ├── runner.rs            子进程生命周期 / 日志泵 / 信号终止
         ├── probe.rs             跨平台环境探测
-        ├── store.rs             JSON 持久化 + 钥匙串
+        ├── store.rs             JSON 持久化
         ├── prefs.rs             全局偏好
         └── model.rs             数据模型
 ```
@@ -125,7 +125,7 @@ brew install openconnect && ./scripts/bundle-openconnect-macos.sh
 ```bash
 sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
      libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
-     libdbus-1-dev pkg-config      # libdbus-1-dev 供 keyring 使用
+     pkg-config
 sudo apt install openconnect
 ```
 
@@ -135,8 +135,8 @@ sudo apt install openconnect
 - WebView2 运行时（Win10 1803+ / Win11 通常已内置）
 - 自备 `openconnect.exe` 及其依赖 DLL，见 [第 6 节](#6-windows-部署重点)
 
-`keyring` 在 Linux 走 Secret Service，桌面环境需有 `gnome-keyring` / `kwallet`
-并处于解锁状态；不可用时程序会提示并退化为「每次手动输入密码」，不影响连接。
+本项目不依赖任何系统密钥环：密码只在连接时由用户输入，存于进程内存，
+不会写入磁盘，也不进入命令行参数。
 
 ---
 
@@ -269,10 +269,16 @@ public 仓库 Actions 分钟数不限；private 仓库 macOS runner 按 10 倍�
 | 平台 | 本程序的处理方式 |
 | --- | --- |
 | Windows | 通过内嵌清单 `requireAdministrator`，双击即弹 UAC。若便携版被以普通权限启动，界面会显示「未提权」红色告警并阻止连接。 |
-| macOS | **不会**自动提权。请从终端启动：`sudo "/Applications/Octauri.app/Contents/MacOS/octauri"`。未以 root 运行时界面顶部显示权限告警与可复制的启动命令。 |
-| Linux | 同上，`sudo ./octauri`。也可以为二进制配置 `pkexec` 或 sudoers 免密规则。 |
+| macOS | **双击启动时自动弹出系统密码框**，输密码后以 root 运行，全程不接触终端。若在密码框中点「取消」，会给出说明并退出。也支持手动 `sudo` 启动作为兜底。 |
+| Linux | 需从终端 `sudo ./octauri` 启动，也可配置 `pkexec` 或 sudoers 免密规则；或给 openconnect 单独 `setcap cap_net_admin+ep`。 |
 
 程序**不会**自行修改 sudoers、不会静默提权、不会写入系统目录。
+macOS 的提权走系统原生 `osascript ... with administrator privileges`，即系统标准密码框，
+权限不会驻留——每次启动都需要确认一次。
+
+macOS 提权后进程以 root 运行，但配置文件仍然写到**真实登录用户**的
+`~/Library/Application Support/`（通过 `stat -f %Su /dev/console` 定位），
+不会落到 `/var/root` 那种用户看不到的地方。
 
 ---
 
@@ -399,7 +405,7 @@ npx tauri build --bundles nsis
 | --- | --- |
 | 配置列表 | `{appDataDir}/profiles.json`（macOS `~/Library/Application Support/io.github.nbsod.octauri/`，Windows `%APPDATA%\io.github.nbsod.octauri\`，Linux `~/.config/io.github.nbsod.octauri/`） |
 | 全局设置 | 同目录 `prefs.json` |
-| 密码 | 系统钥匙串，服务名 `octauri`，账户 `profile:<配置id>` |
+| 密码 | **不存储**。每次连接时输入，仅存在于进程内存 |
 | 日志 | 仅内存（后端 2000 条环形缓冲 + 前端可配上限），不落盘；需要留存请手动导出 |
 
 `profiles.json` 采用「写临时文件 + rename」的原子写入，文件权限在类 Unix 系统上

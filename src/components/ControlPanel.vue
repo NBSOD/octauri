@@ -70,12 +70,6 @@ const authLabel = computed(() => {
   return p.authMethod === "certificate" ? "客户端证书" : "用户名 / 密码";
 });
 
-const passwordModeLabel = computed(() => {
-  const p = selectedProfile.value;
-  if (!p) return "-";
-  if (p.authMethod === "certificate") return "证书口令按需输入";
-  return p.rememberPassword ? "已保存至系统钥匙串" : "每次连接手动输入";
-});
 </script>
 
 <template>
@@ -159,8 +153,6 @@ const passwordModeLabel = computed(() => {
           <dd>{{ selectedProfile.username || "—" }}</dd>
           <dt>认证方式</dt>
           <dd>{{ authLabel }}</dd>
-          <dt>凭据策略</dt>
-          <dd>{{ passwordModeLabel }}</dd>
           <dt v-if="selectedProfile.protocol">协议</dt>
           <dd v-if="selectedProfile.protocol">{{ selectedProfile.protocol }}</dd>
           <dt v-if="selectedProfile.certificatePath">客户端证书</dt>

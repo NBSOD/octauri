@@ -61,7 +61,6 @@ jobs:
             libxdo-dev \
             librsvg2-dev \
             libssl-dev \
-            libdbus-1-dev \
             build-essential \
             curl wget file patchelf
 

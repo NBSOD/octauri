@@ -38,9 +38,6 @@ pub struct Profile {
     /// 证书认证：私钥路径 (PEM)
     #[serde(default)]
     pub key_path: String,
-    /// true = 密码存入系统钥匙串；false = 每次连接手动输入
-    #[serde(default)]
-    pub remember_password: bool,
     /// 追加给 openconnect 的自定义参数，例如 "-v --no-dtls"
     #[serde(default)]
     pub extra_args: String,

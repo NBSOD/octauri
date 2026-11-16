@@ -19,6 +19,87 @@ use tauri::{Emitter, Manager, RunEvent, WindowEvent};
 use commands::AppState;
 use runner::Runner;
 
+// ---------------------------------------------------------------
+// macOS：双击启动时自动提权
+// ---------------------------------------------------------------
+//
+// openconnect 创建 utun 接口、写路由表必须是 root。为了不让用户开终端敲
+// sudo，首次以非 root 启动时用系统密码框重新拉起自己，然后当前实例退出。
+// 用户看到的就是「双击 app → 输密码 → 界面出来」。
+#[cfg(target_os = "macos")]
+fn relaunch_as_root_if_needed() -> bool {
+    // SAFETY: geteuid 无参数、无副作用。
+    if unsafe { libc::geteuid() } == 0 {
+        return false;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return false;
+    };
+
+    // AppleScript 字符串里的单引号需转义：' -> '\''
+    let path = exe.to_string_lossy().replace('\'', r#"'\''"#);
+    let script = format!(r#"do shell script "'{path}'" with administrator privileges"#);
+
+    let ok = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&script)
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if !ok {
+        // 用户取消授权：给出明确说明，避免"双击后什么都没发生"
+        let _ = std::process::Command::new("osascript")
+            .arg("-e")
+            .arg(
+                r#"display dialog "Octauri 需要管理员权限才能创建 VPN 虚拟网卡。
+没有该权限无法建立连接。" buttons {"好"} default button 1 with icon caution with title "Octauri""#,
+            )
+            .status();
+    }
+    true
+}
+
+/// 以 root 运行时，Tauri 默认会把数据写到 /var/root（用户看不到、也无法备份）。
+/// 这里把数据目录重定向到真实登录用户的 Library 下。
+#[cfg(target_os = "macos")]
+fn user_data_dir_fallback() -> Option<std::path::PathBuf> {
+    use std::process::{Command, Stdio};
+    // /dev/console 的所有者就是当前登录的桌面用户
+    let out = Command::new("stat")
+        .args(["-f", "%Su", "/dev/console"])
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
+    let user = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if user.is_empty() || user == "root" || user == "loginwindow" {
+        return None;
+    }
+    let home = std::path::PathBuf::from("/Users").join(&user);
+    if !home.is_dir() {
+        return None;
+    }
+    Some(
+        home.join("Library/Application Support")
+            .join("io.github.nbsod.octauri"),
+    )
+}
+
+fn resolve_data_dir(app: &tauri::App) -> std::path::PathBuf {
+    #[cfg(target_os = "macos")]
+    {
+        // SAFETY: geteuid 无参数、无副作用。
+        if unsafe { libc::geteuid() } == 0 {
+            if let Some(dir) = user_data_dir_fallback() {
+                return dir;
+            }
+        }
+    }
+    app.path()
+        .app_data_dir()
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
 fn show_main(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
         let _ = win.show();
@@ -100,13 +181,16 @@ fn setup_window(app: &tauri::App) {
 }
 
 pub fn run() {
+    // macOS：非 root 时用系统密码框重新拉起自己，随后当前实例退出
+    #[cfg(target_os = "macos")]
+    if relaunch_as_root_if_needed() {
+        std::process::exit(0);
+    }
+
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
-            let dir = app
-                .path()
-                .app_data_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            let dir = resolve_data_dir(app);
             let _ = std::fs::create_dir_all(&dir);
             app.manage(AppState {
                 store: store::Store::new(dir.clone()),
@@ -124,9 +208,6 @@ pub fn run() {
             commands::profile_delete,
             commands::profile_import,
             commands::profile_export,
-            commands::credential_status,
-            commands::credential_set,
-            commands::credential_clear,
             commands::env_probe,
             commands::connect,
             commands::disconnect,

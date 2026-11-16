@@ -1,13 +1,11 @@
-//! 配置持久化（JSON）与敏感凭据存储（系统钥匙串）。
+//! 配置持久化（JSON）。
 //!
-//! - 非敏感字段写入 app_data_dir/profiles.json
-//! - 密码写入 macOS Keychain / Windows Credential Manager / Linux Secret Service
-//!   JSON 中不落任何明文或密文。
+//! 只持久化非敏感字段（网关、账号、参数）。
+//! 密码一律不落盘，每次连接时由用户输入，经 stdin 传给 openconnect。
 
 use crate::model::{now_ms, Profile};
 use std::path::{Path, PathBuf};
 
-const SERVICE: &str = "octauri";
 const FILE_NAME: &str = "profiles.json";
 
 #[derive(Debug, Default, serde::Serialize, serde::Deserialize)]
@@ -102,8 +100,6 @@ impl Store {
             return Err("配置不存在".into());
         }
         self.save_all(&all)?;
-        // 同步清理钥匙串，避免残留凭据
-        let _ = delete_password(id);
         Ok(())
     }
 
@@ -133,8 +129,6 @@ impl Store {
                 q.created_at = ts;
             }
             q.updated_at = ts;
-            // 导入不携带密码，强制用户重新输入
-            q.remember_password = false;
             p = q;
             all.push(p);
             count += 1;
@@ -210,34 +204,4 @@ pub fn new_id() -> String {
         .map(|d| d.as_nanos())
         .unwrap_or(0);
     format!("p{:x}{:x}", nanos, n)
-}
-
-// ------------------------- 钥匙串凭据 -------------------------
-
-fn entry(profile_id: &str) -> Result<keyring::Entry, String> {
-    keyring::Entry::new(SERVICE, &format!("profile:{profile_id}"))
-        .map_err(|e| format!("无法访问系统钥匙串：{e}"))
-}
-
-pub fn set_password(profile_id: &str, password: &str) -> Result<(), String> {
-    entry(profile_id)?
-        .set_password(password)
-        .map_err(|e| format!("写入系统钥匙串失败：{e}"))
-}
-
-pub fn get_password(profile_id: &str) -> Option<String> {
-    entry(profile_id).ok()?.get_password().ok()
-}
-
-pub fn has_password(profile_id: &str) -> bool {
-    get_password(profile_id).map(|s| !s.is_empty()).unwrap_or(false)
-}
-
-pub fn delete_password(profile_id: &str) -> Result<(), String> {
-    match entry(profile_id)?.delete_credential() {
-        Ok(()) => Ok(()),
-        // 不存在视为成功
-        Err(keyring::Error::NoEntry) => Ok(()),
-        Err(e) => Err(format!("清理系统钥匙串失败：{e}")),
-    }
 }

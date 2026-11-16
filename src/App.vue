@@ -10,15 +10,7 @@ import AboutDialog from "./components/AboutDialog.vue";
 import AlertDialog from "./components/AlertDialog.vue";
 import PasswordDialog from "./components/PasswordDialog.vue";
 import Toasts from "./components/Toasts.vue";
-import { api } from "./api";
-import {
-  alertError,
-  connectWith,
-  initApp,
-  pendingPasswordPrompt,
-  saveProfile,
-  state,
-} from "./store";
+import { connectWith, initApp, pendingPasswordPrompt, state } from "./store";
 import type { Profile } from "./types";
 
 const profileDialog = ref(false);
@@ -76,22 +68,10 @@ watch(
   },
 );
 
-async function submitPassword(password: string, remember: boolean) {
+async function submitPassword(password: string) {
   passwordOpen.value = false;
   const p = passwordProfile.value;
   if (!p) return;
-  if (remember) {
-    try {
-      await api.credentialSet(p.id, password);
-      state.credentialFlags[p.id] = true;
-      // 用户在此勾选「记住」，需同步回配置，否则下次连接仍会追问
-      if (!p.rememberPassword) {
-        await saveProfile({ ...p, rememberPassword: true });
-      }
-    } catch (e) {
-      alertError("保存密码失败", e, "系统钥匙串不可用时，可改用「每次手动输入」模式。");
-    }
-  }
   await connectWith(p.id, password);
 }
 

@@ -63,7 +63,7 @@ pub fn probe(resource_openconnect: Option<PathBuf>, override_path: Option<&str>)
         match platform.as_str() {
             "windows" => "当前未以管理员身份运行。建立隧道需要管理员权限：请右键程序图标选择「以管理员身份运行」。".into(),
             "macos" => format!(
-                "当前未以 root 运行。openconnect 需要创建虚拟网卡，请通过终端启动：\nsudo \"{}\"",
+                "当前未以 root 运行，无法创建虚拟网卡。\n请从 Finder 双击 Octauri.app 启动（会自动弹出系统授权窗口），\n或在终端用 sudo 启动：\nsudo \"{}\"",
                 current_exe_string()
             ),
             _ => format!(

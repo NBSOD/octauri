@@ -33,8 +33,6 @@ export const state = reactive({
   ready: false,
   profiles: [] as Profile[],
   selectedId: "" as string,
-  /** 各配置是否已在钥匙串中存有密码 */
-  credentialFlags: {} as Record<string, boolean>,
   conn: {
     state: "idle" as ConnStateName,
     profileId: null,
@@ -173,18 +171,6 @@ export async function refreshProfiles() {
     if (!state.profiles.some((p) => p.id === state.selectedId)) {
       state.selectedId = state.profiles[0]?.id ?? "";
     }
-    // 批量查询凭据状态（数量通常个位数，开销可忽略）
-    const flags: Record<string, boolean> = {};
-    for (const p of state.profiles) {
-      if (p.rememberPassword) {
-        try {
-          flags[p.id] = await api.credentialStatus(p.id);
-        } catch {
-          flags[p.id] = false;
-        }
-      }
-    }
-    state.credentialFlags = flags;
   } catch (e) {
     alertError("读取配置失败", e);
   }
@@ -232,13 +218,6 @@ export async function exportProfiles(path: string, ids: string[]) {
   }
 }
 
-/** 是否需要用户手动输入密码 */
-export function needsPassword(profile: Profile): boolean {
-  if (profile.authMethod === "certificate") return false;
-  if (!profile.rememberPassword) return true;
-  return !state.credentialFlags[profile.id];
-}
-
 // ------------------------------ 连接控制 ------------------------------
 
 export async function connectWith(profileId: string, password?: string) {
@@ -272,11 +251,12 @@ export async function connectSelected() {
     toast("请先选择一个配置", "warn");
     return;
   }
-  if (needsPassword(p)) {
-    requestPassword(p.id);
+  // 密码不落盘：除证书模式（口令可为空）外，一律弹窗输入
+  if (p.authMethod === "certificate") {
+    await connectWith(p.id);
     return;
   }
-  await connectWith(p.id);
+  requestPassword(p.id);
 }
 
 export async function disconnect() {

@@ -73,7 +73,6 @@ OpenConnect 正是通过 `wintun.h` 的 API 加载 `wintun.dll`，因此随包�
 | tauri-plugin-dialog | 2.x | MIT OR Apache-2.0 | 文件选择对话框 |
 | [Serde](https://serde.rs/) | 1.x | MIT OR Apache-2.0 | 序列化 |
 | serde_json | 1.x | MIT OR Apache-2.0 | JSON 持久化 |
-| [keyring](https://github.com/hwchen/keyring-rs) | 3.x | MIT OR Apache-2.0 | 系统钥匙串 |
 | libc (unix) | 0.2 | MIT OR Apache-2.0 | 信号与 uid 检测 |
 | windows-sys | 0.59 | MIT OR Apache-2.0 | Windows 提权检测 |
 | [Vue](https://vuejs.org/) | 3.x | MIT | 前端框架 |

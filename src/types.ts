@@ -11,7 +11,6 @@ export interface Profile {
   protocol: string;
   certificatePath: string;
   keyPath: string;
-  rememberPassword: boolean;
   extraArgs: string;
   openconnectPath: string;
   createdAt: number;
@@ -84,7 +83,6 @@ export const emptyProfile = (): Profile => ({
   protocol: "",
   certificatePath: "",
   keyPath: "",
-  rememberPassword: false,
   extraArgs: "",
   openconnectPath: "",
   createdAt: 0,

@@ -6,7 +6,7 @@
 use crate::model::{EnvReport, LogLine, Profile, StateSnapshot};
 use crate::probe;
 use crate::runner::Runner;
-use crate::store::{self, Store};
+use crate::store::Store;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tauri::path::BaseDirectory;
@@ -70,12 +70,7 @@ pub fn profiles_list(state: State<'_, AppState>) -> Vec<Profile> {
 
 #[tauri::command]
 pub fn profile_save(state: State<'_, AppState>, profile: Profile) -> Result<Profile, String> {
-    let saved = state.store.upsert(profile)?;
-    // 未启用「记住密码」时清除历史凭据，避免残留
-    if !saved.remember_password {
-        let _ = store::delete_password(&saved.id);
-    }
-    Ok(saved)
+    state.store.upsert(profile)
 }
 
 #[tauri::command]
@@ -112,24 +107,6 @@ pub fn profile_export(
 }
 
 // ------------------------------ 凭据 ------------------------------
-
-#[tauri::command]
-pub fn credential_status(profile_id: String) -> bool {
-    store::has_password(&profile_id)
-}
-
-#[tauri::command]
-pub fn credential_set(profile_id: String, password: String) -> Result<(), String> {
-    if password.is_empty() {
-        return store::delete_password(&profile_id);
-    }
-    store::set_password(&profile_id, &password)
-}
-
-#[tauri::command]
-pub fn credential_clear(profile_id: String) -> Result<(), String> {
-    store::delete_password(&profile_id)
-}
 
 // ------------------------------ 环境 ------------------------------
 
@@ -214,26 +191,13 @@ pub fn connect(
         ));
     }
 
-    // 2) 凭据取值
+    // 3) 凭据：不持久化，必须由本次连接传入
     let pass = match profile.auth_method {
-        crate::model::AuthMethod::Password => {
-            let from_store = if profile.remember_password {
-                store::get_password(&profile.id)
-            } else {
-                None
-            };
-            let value = from_store
-                .filter(|s| !s.is_empty())
-                .or_else(|| password.clone().filter(|s| !s.is_empty()));
-            match value {
-                Some(v) => Some(v),
-                None => {
-                    return Err(
-                        "缺少登录密码。请勾选「记住密码」，或在连接时输入密码。".into(),
-                    )
-                }
-            }
-        }
+        crate::model::AuthMethod::Password => match password.clone().filter(|s| !s.is_empty()) {
+            Some(v) => Some(v),
+            None => return Err("请输入登录密码".into()),
+        },
+        // 证书模式下 password 作为私钥口令，可为空
         crate::model::AuthMethod::Certificate => password.clone().filter(|s| !s.is_empty()),
     };
 

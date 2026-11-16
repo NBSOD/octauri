@@ -1,31 +1,19 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from "vue";
+import { reactive, ref } from "vue";
 import { open } from "@tauri-apps/plugin-dialog";
 import Icon from "./Icon.vue";
-import { api } from "../api";
-import { alertError, saveProfile, toast } from "../store";
+import { saveProfile, toast } from "../store";
 import { emptyProfile, type Profile } from "../types";
 
 const props = defineProps<{ profile: Profile | null }>();
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const form = reactive<Profile>({ ...emptyProfile(), ...(props.profile ?? {}) });
+// 仅证书模式使用：私钥口令
 const password = ref("");
-const hasStored = ref(false);
 const busy = ref(false);
-const showPassword = ref(false);
 
 const isNew = !props.profile?.id;
-
-onMounted(async () => {
-  if (!isNew) {
-    try {
-      hasStored.value = await api.credentialStatus(form.id);
-    } catch {
-      hasStored.value = false;
-    }
-  }
-});
 
 async function browseCert() {
   const p = await open({
@@ -63,19 +51,7 @@ async function submit() {
   busy.value = true;
   try {
     const saved = await saveProfile({ ...form });
-    if (saved && form.authMethod === "password" && form.rememberPassword && password.value) {
-      try {
-        await api.credentialSet(saved.id, password.value);
-        toast("密码已保存至系统钥匙串", "success");
-      } catch (e) {
-        alertError(
-          "保存密码失败",
-          e,
-          "系统钥匙串不可用。可取消「记住密码」，改为每次连接手动输入。",
-        );
-      }
-    }
-    emit("close");
+    if (saved) emit("close");
   } finally {
     busy.value = false;
   }
@@ -116,30 +92,11 @@ async function submit() {
           </label>
         </div>
 
-        <!-- 密码模式 -->
-        <template v-if="form.authMethod === 'password'">
-          <label class="check">
-            <input v-model="form.rememberPassword" type="checkbox" />
-            <span>记住密码（存入系统钥匙串，不写入配置文件）</span>
-          </label>
-          <div v-if="form.rememberPassword" class="row">
-            <label class="field">
-              <span class="label">
-                密码
-                <span v-if="hasStored" class="faint">（已保存，留空则不修改）</span>
-              </span>
-              <input
-                v-model="password"
-                :type="showPassword ? 'text' : 'password'"
-                placeholder="留空表示沿用已保存的密码"
-                autocomplete="new-password"
-              />
-            </label>
-            <button class="btn" style="height: 30px" @click="showPassword = !showPassword">
-              {{ showPassword ? "隐藏" : "显示" }}
-            </button>
-          </div>
-        </template>
+        <!-- 密码模式：密码不落盘，连接时输入 -->
+        <p v-if="form.authMethod === 'password'" class="hint">
+          密码不会保存在本地，也不会写入配置文件。每次连接时弹窗输入，
+          通过 stdin 直接传给 openconnect，不出现在进程参数列表中。
+        </p>
 
         <!-- 证书模式 -->
         <template v-else>

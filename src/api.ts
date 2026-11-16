@@ -29,13 +29,6 @@ export const api = {
   profileExport: (path: string, ids: string[]) =>
     invoke<void>("profile_export", { path, ids }),
 
-  credentialStatus: (profileId: string) =>
-    invoke<boolean>("credential_status", { profileId }),
-  credentialSet: (profileId: string, password: string) =>
-    invoke<void>("credential_set", { profileId, password }),
-  credentialClear: (profileId: string) =>
-    invoke<void>("credential_clear", { profileId }),
-
   envProbe: (profileId?: string) =>
     invoke<EnvReport>("env_probe", { profileId: profileId ?? null }),
 
