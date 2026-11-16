@@ -71,7 +71,13 @@ case "$SCENARIO" in
     echo "SSL negotiation with ${GW}"
     sleep 0.3
     echo "Server certificate verify failed: signer not found"
-    echo "Failed to open HTTPS connection to ${GW}"
+    echo ""
+    echo "Certificate from VPN server \"${GW}\" failed verification."
+    echo "Reason: signer not found"
+    echo "To trust this server in future, perhaps add this to your command line:"
+    echo "    --servercert pin-sha256:7f3a9c2e5b8d41f6a0c7e9d2b4f8a1c3e5d7b9f0a2c4e6d8b0f1a3c5e7d9b2f4"
+    echo "Enter 'yes' to accept, 'no' to abort; anything else to view:"
+    sleep 0.5
     exit 2
     ;;
 

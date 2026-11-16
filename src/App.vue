@@ -9,6 +9,7 @@ import SettingsDialog from "./components/SettingsDialog.vue";
 import AboutDialog from "./components/AboutDialog.vue";
 import AlertDialog from "./components/AlertDialog.vue";
 import PasswordDialog from "./components/PasswordDialog.vue";
+import CertDialog from "./components/CertDialog.vue";
 import Toasts from "./components/Toasts.vue";
 import { connectWith, initApp, pendingPasswordPrompt, state } from "./store";
 import type { Profile } from "./types";
@@ -107,6 +108,7 @@ onMounted(() => {
       @submit="submitPassword"
       @cancel="passwordOpen = false"
     />
+    <CertDialog />
     <AlertDialog />
     <Toasts />
   </div>

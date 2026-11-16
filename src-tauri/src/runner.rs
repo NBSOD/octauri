@@ -18,6 +18,8 @@ use tauri::{AppHandle, Emitter};
 
 pub const EVT_LOG: &str = "oc://log";
 pub const EVT_STATE: &str = "oc://state";
+/// 服务器证书未通过校验时推给前端，由用户决定是否固定该证书
+pub const EVT_CERT: &str = "oc://cert-prompt";
 
 pub struct Runner {
     state: Mutex<StateSnapshot>,
@@ -30,6 +32,10 @@ pub struct Runner {
     user_stop: AtomicBool,
     /// 串行化启动流程，避免并发点击导致拉起两个进程
     start_lock: Mutex<()>,
+    /// 本次连接是否已就证书问题询问过用户（每连接只问一次）
+    cert_prompted: AtomicBool,
+    /// 暂存最近一次解析到的证书失败原因
+    cert_reason: Mutex<String>,
 }
 
 impl Runner {
@@ -42,6 +48,8 @@ impl Runner {
             pid: AtomicU32::new(0),
             user_stop: AtomicBool::new(false),
             start_lock: Mutex::new(()),
+            cert_prompted: AtomicBool::new(false),
+            cert_reason: Mutex::new(String::new()),
         })
     }
 
@@ -136,6 +144,55 @@ impl Runner {
         }
     }
 
+    /// 从日志里捕捉服务器证书校验失败的信息。
+    ///
+    /// openconnect 在验证失败时会打印：
+    ///   Certificate from VPN server "x" failed verification.
+    ///   Reason: signer not found
+    ///       --servercert pin-sha256:AbCd...
+    ///   Enter 'yes' to accept, 'no' to abort;
+    ///
+    /// 我们不等它询问（stdin 已关闭），而是取出指纹交给用户确认，
+    /// 确认后写入 profile.servercert 再重连。
+    fn detect_cert_prompt(&self, app: &AppHandle, boot: u64, text: &str) {
+        if self.generation.load(Ordering::SeqCst) != boot {
+            return;
+        }
+        if let Some(reason) = text.split("Reason:").nth(1) {
+            let mut slot = self.cert_reason.lock().unwrap_or_else(|e| e.into_inner());
+            *slot = reason.trim().to_string();
+        }
+        let Some(idx) = text.find("pin-sha256:") else {
+            return;
+        };
+        if self.cert_prompted.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let pin = text[idx..]
+            .split_whitespace()
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        if pin.is_empty() {
+            return;
+        }
+        let reason = self
+            .cert_reason
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        let profile_id = self.lock_state().profile_id.clone().unwrap_or_default();
+        self.log(app, "app", "服务器证书未通过校验，等待用户确认是否信任该证书");
+        let _ = app.emit(
+            EVT_CERT,
+            crate::model::CertPrompt {
+                profile_id,
+                reason,
+                pin,
+            },
+        );
+    }
+
     /// 启动 openconnect 子进程。
     ///
     /// `password` 为 Some 时通过 stdin 传入（配合 --passwd-on-stdin），不落盘、不进 argv。
@@ -196,6 +253,11 @@ impl Runner {
         if !profile.protocol.is_empty() {
             cmd.arg(format!("--protocol={}", profile.protocol));
         }
+        // 用户已确认过的服务器证书指纹：跳过 CA 校验但绑定到该证书，
+        // 比无条件信任安全（证书更换后会再次询问）
+        if !profile.servercert.is_empty() {
+            cmd.arg(format!("--servercert={}", profile.servercert));
+        }
         // 内置运行时会自带 vpnc-script，显式传入以免依赖系统默认路径
         // （openconnect 默认只在 /etc/vpnc/vpnc-script 与 PATH 中查找）
         if let Some(script) = resolve_vpnc_script(bin) {
@@ -229,6 +291,8 @@ impl Runner {
         let boot = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.pid.store(pid, Ordering::SeqCst);
         self.user_stop.store(false, Ordering::SeqCst);
+        self.cert_prompted.store(false, Ordering::SeqCst);
+        *self.cert_reason.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
 
         // 写入凭据后立即关闭 stdin
         if let Some(mut stdin) = child.stdin.take() {
@@ -411,6 +475,7 @@ fn pump<R: Read + Send + 'static>(
             }
             runner.log(&app, stream, &text);
             runner.advance(&app, boot, &text);
+            runner.detect_cert_prompt(&app, boot, &text);
         }
     });
 }

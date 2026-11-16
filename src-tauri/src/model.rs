@@ -44,6 +44,10 @@ pub struct Profile {
     /// 该配置专属的 openconnect 可执行文件路径，留空则走全局/自动探测
     #[serde(default)]
     pub openconnect_path: String,
+    /// 固定信任的服务器证书指纹（形如 pin-sha256:xxx）。
+    /// 为空表示走正常 CA 校验；企业自签证书场景下由用户确认后写入。
+    #[serde(default)]
+    pub servercert: String,
     #[serde(default)]
     pub created_at: i64,
     #[serde(default)]
@@ -62,6 +66,7 @@ impl Profile {
         p.key_path = p.key_path.trim().to_string();
         p.extra_args = p.extra_args.trim().to_string();
         p.openconnect_path = p.openconnect_path.trim().to_string();
+        p.servercert = p.servercert.trim().to_string();
         p
     }
 }
@@ -159,4 +164,14 @@ pub fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+/// 服务器证书不受信任时推给前端，供用户决定是否固定该证书。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CertPrompt {
+    pub profile_id: String,
+    /// 验证失败原因，例如 "signer not found" / "self signed certificate"
+    pub reason: String,
+    /// 形如 pin-sha256:AbCd...
+    pub pin: String,
 }

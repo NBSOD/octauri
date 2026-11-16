@@ -13,6 +13,8 @@ export interface Profile {
   keyPath: string;
   extraArgs: string;
   openconnectPath: string;
+  /** 已固定的服务器证书指纹，空表示走正常 CA 校验 */
+  servercert: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -85,6 +87,13 @@ export const emptyProfile = (): Profile => ({
   keyPath: "",
   extraArgs: "",
   openconnectPath: "",
+  servercert: "",
   createdAt: 0,
   updatedAt: 0,
 });
+/** 服务器证书校验失败时由后端推送 */
+export interface CertPrompt {
+  profileId: string;
+  reason: string;
+  pin: string;
+}

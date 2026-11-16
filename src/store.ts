@@ -9,6 +9,7 @@ import { listen } from "@tauri-apps/api/event";
 import { api, errorText } from "./api";
 import type {
   AppInfo,
+  CertPrompt,
   ConnStateName,
   EnvReport,
   LogLine,
@@ -54,6 +55,8 @@ export const state = reactive({
   busy: false,
   toasts: [] as Toast[],
   alert: null as AlertBox | null,
+  /** 服务器证书待确认 */
+  certPrompt: null as CertPrompt | null,
 });
 
 export const selectedProfile = computed<Profile | null>(
@@ -148,6 +151,9 @@ export async function initApp() {
   await listen("oc://tray-connect", () => {
     void connectSelected();
   });
+  await listen<CertPrompt>("oc://cert-prompt", (e) => {
+    state.certPrompt = e.payload;
+  });
 
   try {
     state.conn = await api.connState();
@@ -216,6 +222,21 @@ export async function exportProfiles(path: string, ids: string[]) {
   } catch (e) {
     alertError("导出失败", e);
   }
+}
+
+/** 用户确认信任该服务器证书：写入配置后立即重连 */
+export async function trustServerCert() {
+  const prompt = state.certPrompt;
+  if (!prompt) return;
+  state.certPrompt = null;
+  const p = state.profiles.find((x) => x.id === prompt.profileId);
+  if (!p) return;
+  const saved = await saveProfile({ ...p, servercert: prompt.pin });
+  if (saved) await connectWith(saved.id);
+}
+
+export function dismissCertPrompt() {
+  state.certPrompt = null;
 }
 
 // ------------------------------ 连接控制 ------------------------------

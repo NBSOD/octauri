@@ -147,6 +147,15 @@ async function submit() {
           </div>
         </div>
 
+        <div v-if="form.servercert" class="field">
+          <span class="label">已固定的服务器证书（跳过 CA 校验，仅信任该指纹）</span>
+          <div class="field-inline">
+            <input :value="form.servercert" readonly />
+            <button class="btn" @click="form.servercert = ''">清除</button>
+          </div>
+          <span class="hint">清除后恢复标准 CA 校验；下次遇到不受信任的证书会重新询问。</span>
+        </div>
+
         <label class="field">
           <span class="label">自定义 openconnect 额外参数</span>
           <textarea
