@@ -4,8 +4,11 @@
 //! openconnect 可执行文件提供，本程序只负责：配置管理、子进程拉起、
 //! 日志采集、状态呈现与进程终止。
 
+mod args;
 mod clipboard;
 mod commands;
+#[cfg(target_os = "macos")]
+mod macos_quit;
 mod model;
 mod prefs;
 mod probe;
@@ -51,7 +54,7 @@ fn relaunch_as_root_if_needed() -> bool {
     };
 
     // 开发调试用：OCTAURI_NO_ELEVATE=1 时跳过自动提权（npm run dev 不必每次输密码）
-    if std::env::var_os("OCTAURI_NO_ELEVATE").is_some() {
+    if args::no_elevate() {
         return false;
     }
 
@@ -297,10 +300,20 @@ pub fn run() {
             setup_window(app);
             #[cfg(unix)]
             signals::install(app.handle().clone());
+            // 接管 Dock 退出与 Cmd+Q（都走 NSApplication terminate:）
+            #[cfg(target_os = "macos")]
+            macos_quit::install(app.handle().clone());
+            #[cfg(all(target_os = "macos", debug_assertions))]
+            if let Some(ms) = args::terminate_after_ms() {
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(ms));
+                    crate::macos_quit::self_terminate();
+                });
+            }
             // 自测钩子（仅 debug 构建）：用指定可执行文件起一个连接，
             // 用于验证「连接中退出」时子进程是否被清理
             #[cfg(debug_assertions)]
-            if let Ok(bin) = std::env::var("OCTAURI_SELFTEST_SPAWN") {
+            if let Some(bin) = args::spawn() {
                 if let Some(state) = app.try_state::<AppState>() {
                     let profile = crate::model::Profile {
                         id: "selftest".into(),
@@ -325,10 +338,7 @@ pub fn run() {
             }
             // 自测钩子（仅 debug 构建）：N 毫秒后走 app.exit(0)，用于验证退出路径
             #[cfg(debug_assertions)]
-            if let Some(ms) = std::env::var("OCTAURI_EXIT_AFTER_MS")
-                .ok()
-                .and_then(|v| v.parse::<u64>().ok())
-            {
+            if let Some(ms) = args::exit_after_ms() {
                 let h = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(ms));

@@ -281,7 +281,21 @@ macOS 的提权走系统原生 `osascript ... with administrator privileges`，�
 权限不会驻留——每次启动都需要确认一次。授权通过后 root 实例在后台运行，
 负责弹框的启动器立即退出，不会残留进程。
 
-开发调试时可设置 `OCTAURI_NO_ELEVATE=1` 跳过自动提权（此时无法建立真实隧道，
+开发调试可传命令行参数（也可用同名环境变量）：
+
+```bash
+Octauri.app/Contents/MacOS/octauri --no-elevate --port 28430
+```
+
+| 参数 | 作用 |
+| --- | --- |
+| `--no-elevate` | 跳过 macOS 自动提权（无法建真实隧道，配合 mock 使用） |
+| `--port N` | 覆盖单实例端口（默认 28417），避让冲突 |
+| `--spawn PATH` | 启动即用指定可执行文件发起连接（仅 debug 构建） |
+| `--exit-after-ms N` | N 毫秒后自动退出（仅 debug 构建） |
+| `--terminate-after-ms N` | N 毫秒后调用 `[NSApp terminate:]`，验证退出接管（仅 debug 构建） |
+
+环境变量 `OCTAURI_NO_ELEVATE=1` 同样可跳过自动提权（此时无法建立真实隧道，
 配合 `scripts/mock-openconnect.sh` 使用）。
 
 macOS 提权后进程以 root 运行，但配置文件仍然写到**真实登录用户**的
@@ -290,9 +304,21 @@ macOS 提权后进程以 root 运行，但配置文件仍然写到**真实登录
 
 ### 退出行为
 
-退出 Octauri（托盘「退出」、Cmd+Q、菜单「退出 Octauri」，以及注销/关机时系统发来的
-SIGTERM / SIGINT / SIGHUP）都会**先结束 openconnect 子进程**：发 SIGTERM 让它调用
+退出 Octauri 时都会**先结束 openconnect 子进程**：发 SIGTERM 让它调用
 vpnc-script 还原路由与 DNS，1.2 秒内未退出再 SIGKILL，然后进程结束。
+
+覆盖的退出入口：
+
+| 入口 | 实现 |
+| --- | --- |
+| 托盘「退出」 | `AppHandle::exit` |
+| Cmd+Q / 菜单「退出 Octauri」 | 接管 `-[NSApplication terminate:]` |
+| Dock 图标「退出」/ 系统关机 | 接管 delegate 的 `applicationShouldTerminate:` |
+| 注销、`kill`、Ctrl+C | signals：SIGTERM / SIGINT / SIGHUP |
+
+为什么需要接管系统退出：AppKit 的终止流程会尝试关闭所有窗口，而「关窗口收起到托盘」
+调用了 prevent_close，窗口不关闭 → 终止被取消 → 进程留在后台，端口也一直占着。
+接管后一律走 `AppHandle::exit`，即托盘「退出」那条路径。
 
 不这么做的话，openconnect 会以 root 孤儿进程残留，隧道与路由都还在，只能
 `sudo kill -9` 清理。清理完成后程序直接结束进程——macOS 上等待子进程会占用主线程，

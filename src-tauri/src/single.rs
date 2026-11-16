@@ -24,11 +24,7 @@ const MAX_LINE: u64 = 64;
 /// 实际使用的端口。可用 `OCTAURI_PORT` 覆盖：端口被其他程序占用时用于避让，
 /// 也让自动化测试不会碰到正在运行的真实实例。
 pub fn port() -> u16 {
-    std::env::var("OCTAURI_PORT")
-        .ok()
-        .and_then(|v| v.parse::<u16>().ok())
-        .filter(|p| *p != 0)
-        .unwrap_or(PORT)
+    crate::args::port().unwrap_or(PORT)
 }
 
 fn addr(port: u16) -> SocketAddr {
