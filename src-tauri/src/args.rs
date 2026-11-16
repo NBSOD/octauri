@@ -17,6 +17,10 @@ pub struct Args {
     pub exit_after_ms: Option<u64>,
     /// N 毫秒后调用 [NSApp terminate:]（仅 debug 构建生效），验证接管是否生效
     pub terminate_after_ms: Option<u64>,
+    /// 以 root 辅助进程模式运行，连接回指定的 GUI 端口（macOS）
+    pub helper_port: Option<u16>,
+    /// 辅助进程的一次性握手 token 文件（读完即删）
+    pub helper_token_file: Option<String>,
 }
 
 static ARGS: OnceLock<Args> = OnceLock::new();
@@ -27,6 +31,7 @@ pub fn get() -> &'static Args {
 
 fn parse() -> Args {
     let mut a = Args::default();
+    let mut helper_mode = false;
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
         let (key, inline) = match arg.split_once('=') {
@@ -40,10 +45,24 @@ fn parse() -> Args {
             "--spawn" => a.spawn = take(),
             "--exit-after-ms" => a.exit_after_ms = take().and_then(|v| v.parse().ok()),
             "--terminate-after-ms" => a.terminate_after_ms = take().and_then(|v| v.parse().ok()),
+            "--helper" => helper_mode = true,
+            "--connect-port" => a.helper_port = take().and_then(|v| v.parse().ok()),
+            "--helper-token-file" => a.helper_token_file = take(),
             _ => {}
         }
     }
+    // --helper 单独出现时缺端口，视作未启用
+    a.helper_port = a.helper_port.filter(|_| helper_mode);
     a
+}
+
+/// 辅助进程模式（仅 macOS 由 GUI 以 root 启动时使用）
+pub fn helper_port() -> Option<u16> {
+    get().helper_port
+}
+
+pub fn helper_token_file() -> Option<String> {
+    get().helper_token_file.clone()
 }
 
 /// 环境变量优先于命令行（便于脚本临时覆盖）

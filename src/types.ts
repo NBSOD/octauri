@@ -101,3 +101,6 @@ export interface CertPrompt {
   reason: string;
   pin: string;
 }
+
+/** root 辅助进程状态（macOS） */
+export type HelperState = "starting" | "ready" | "error";

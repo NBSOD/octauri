@@ -12,6 +12,24 @@ import {
   state,
 } from "../store";
 
+/**
+ * 辅助进程提示：授权失败时说明原因并提示重启；
+ * 授权进行中时提示用户在弹出的系统窗口里输入密码。
+ */
+const helperNotice = computed(() => {
+  if (state.helper.state === "error") {
+    return {
+      level: "error",
+      text: `无法建立管理员授权：${state.helper.error}。退出后重新打开 Octauri，并在系统弹窗中允许。`,
+    };
+  }
+  if (state.helper.state === "starting" && state.info?.platform === "macos") {
+    return { level: "warn", text: "正在请求管理员授权，请在系统弹窗中输入密码…" };
+  }
+  return null;
+});
+
+
 /** 每秒刷新一次，用于连接时长与握手超时提示 */
 const now = ref(Date.now());
 let timer = 0;
@@ -72,6 +90,13 @@ function goDiag() {
 
 <template>
   <section class="home">
+    <!-- macOS：GUI 以普通用户运行，openconnect 由 root 辅助进程拉起。
+         用户取消授权或辅助进程未就绪时，这里给出明确原因与处置办法。 -->
+    <div v-if="helperNotice" class="home-banner" :class="helperNotice.level">
+      <Icon name="shield" :size="14" />
+      <span>{{ helperNotice.text }}</span>
+    </div>
+
     <div v-if="!selectedProfile" class="home-empty">
       <Icon name="shield" :size="40" class="faint" />
       <p>左侧选择一个配置，或点击 + 新建</p>
@@ -139,6 +164,7 @@ function goDiag() {
 
 <style scoped>
 .home {
+  position: relative;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -148,6 +174,36 @@ function goDiag() {
   gap: 10px;
   padding: 24px 32px;
   overflow-y: auto;
+}
+
+/* 顶部提示条：辅助进程授权状态（绝对定位，不干扰中央内容的居中） */
+.home-banner {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  right: 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 11px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  line-height: 1.45;
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  color: var(--text-dim);
+}
+
+.home-banner.warn {
+  border-color: color-mix(in srgb, var(--warn) 45%, transparent);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--warn);
+}
+
+.home-banner.error {
+  border-color: color-mix(in srgb, var(--error) 45%, transparent);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: var(--error);
 }
 
 .home-empty {

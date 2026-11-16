@@ -8,6 +8,8 @@ mod args;
 mod clipboard;
 mod commands;
 #[cfg(target_os = "macos")]
+mod helper;
+#[cfg(target_os = "macos")]
 mod macos_quit;
 mod model;
 mod prefs;
@@ -35,57 +37,6 @@ pub(crate) fn test_lock() -> std::sync::MutexGuard<'static, ()> {
     TEST_PROC_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 use runner::Runner;
-
-// ---------------------------------------------------------------
-// macOS：双击启动时自动提权
-// ---------------------------------------------------------------
-//
-// openconnect 创建 utun 接口、写路由表必须是 root。为了不让用户开终端敲
-// sudo，首次以非 root 启动时用系统密码框重新拉起自己，然后当前实例退出。
-// 用户看到的就是「双击 app → 输密码 → 界面出来」。
-#[cfg(target_os = "macos")]
-fn relaunch_as_root_if_needed() -> bool {
-    // SAFETY: geteuid 无参数、无副作用。
-    if unsafe { libc::geteuid() } == 0 {
-        return false;
-    }
-    let Ok(exe) = std::env::current_exe() else {
-        return false;
-    };
-
-    // 开发调试用：OCTAURI_NO_ELEVATE=1 时跳过自动提权（npm run dev 不必每次输密码）
-    if args::no_elevate() {
-        return false;
-    }
-
-    // AppleScript 字符串里的单引号需转义：' -> '\''
-    let path = exe.to_string_lossy().replace('\'', r#"'\''"#);
-    // 末尾 `> /dev/null 2>&1 &`：在后台拉起 root 实例。
-    // do shell script 只有在输出被重定向时才不等待后台进程，
-    // 这样授权通过后 osascript 立即返回，启动器随即退出，不会残留进程。
-    let script = format!(
-        r#"do shell script "'{path}' > /dev/null 2>&1 &" with prompt "Octauri 需要管理员权限来创建 VPN 虚拟网卡。" with administrator privileges"#
-    );
-
-    let ok = std::process::Command::new("osascript")
-        .arg("-e")
-        .arg(&script)
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false);
-
-    if !ok {
-        // 用户取消授权：给出明确说明，避免"双击后什么都没发生"
-        let _ = std::process::Command::new("osascript")
-            .arg("-e")
-            .arg(
-                r#"display dialog "Octauri 需要管理员权限才能创建 VPN 虚拟网卡。
-没有该权限无法建立连接。" buttons {"好"} default button 1 with icon caution with title "Octauri""#,
-            )
-            .status();
-    }
-    true
-}
 
 /// 以 root 运行时，Tauri 默认会把数据写到 /var/root（用户看不到、也无法备份）。
 /// 这里把数据目录重定向到真实登录用户的 Library 下。
@@ -257,19 +208,20 @@ fn setup_window(app: &tauri::App) {
 }
 
 pub fn run() {
+    // 0) 辅助进程模式：以 root 运行，只服务 openconnect 的拉起与 I/O 转发，
+    //    不初始化 Tauri。必须在单实例检测之前分流，否则会与 GUI 抢端口。
+    #[cfg(target_os = "macos")]
+    if let Some(port) = args::helper_port() {
+        helper::helper_main(port, args::helper_token_file());
+    }
+
     // 1) 单实例：已有实例时唤起其窗口后直接退出。
     //    放在提权之前，避免已运行时再次双击还弹一次密码框。
     if single::notify_existing(single::port()) {
         std::process::exit(0);
     }
 
-    // 2) macOS：非 root 时用系统密码框在后台拉起 root 实例，当前实例退出
-    #[cfg(target_os = "macos")]
-    if relaunch_as_root_if_needed() {
-        std::process::exit(0);
-    }
-
-    // 3) 占用单实例端口。被其他程序占用时仍可启动，只是没有单实例保护
+    // 2) 占用单实例端口。被其他程序占用时仍可启动，只是没有单实例保护
     let mut instance_listener = single::bind(single::port());
     if instance_listener.is_none() {
         eprintln!(
@@ -300,6 +252,34 @@ pub fn run() {
             setup_window(app);
             #[cfg(unix)]
             signals::install(app.handle().clone());
+            // macOS：后台启动 root 辅助进程（弹一次系统密码框）。
+            // GUI 自身保持普通用户身份，openconnect 交给辅助进程拉起。
+            #[cfg(target_os = "macos")]
+            if !args::no_elevate() {
+                if let Some(state) = app.try_state::<AppState>() {
+                    let runner = state.runner.clone();
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        let Ok(exe) = std::env::current_exe() else {
+                            let _ = handle.emit("oc://helper-error", "无法定位程序路径");
+                            return;
+                        };
+                        match helper::HelperLink::launch(&exe) {
+                            Ok(link) => match runner.attach_helper(handle.clone(), link) {
+                                Ok(()) => {
+                                    let _ = handle.emit("oc://helper-ready", ());
+                                }
+                                Err(e) => {
+                                    let _ = handle.emit("oc://helper-error", e);
+                                }
+                            },
+                            Err(e) => {
+                                let _ = handle.emit("oc://helper-error", e);
+                            }
+                        }
+                    });
+                }
+            }
             // 接管 Dock 退出与 Cmd+Q（都走 NSApplication terminate:）
             #[cfg(target_os = "macos")]
             macos_quit::install(app.handle().clone());
@@ -310,30 +290,40 @@ pub fn run() {
                     crate::macos_quit::self_terminate();
                 });
             }
-            // 自测钩子（仅 debug 构建）：用指定可执行文件起一个连接，
-            // 用于验证「连接中退出」时子进程是否被清理
+            // 自测钩子（仅 debug 构建）：用指定可执行文件起一个连接。
+            // 放到后台并等待 root 辅助进程就绪，以便验证 helper 链路。
             #[cfg(debug_assertions)]
             if let Some(bin) = args::spawn() {
                 if let Some(state) = app.try_state::<AppState>() {
-                    let profile = crate::model::Profile {
-                        id: "selftest".into(),
-                        name: "selftest".into(),
-                        gateway: "selftest.invalid".into(),
-                        username: "tester".into(),
-                        auth_method: crate::model::AuthMethod::Password,
-                        protocol: String::new(),
-                        certificate_path: String::new(),
-                        key_path: String::new(),
-                        extra_args: "--scenario=hang".into(),
-                        openconnect_path: bin.clone(),
-                        servercert: String::new(),
-                        created_at: 0,
-                        updated_at: 0,
-                    };
-                    match state.runner.start(app.handle(), &profile, std::path::Path::new(&bin), Some("x".into())) {
-                        Ok(pid) => eprintln!("[octauri] self-test: spawned child pid={pid}"),
-                        Err(e) => eprintln!("[octauri] self-test: spawn failed: {e}"),
-                    }
+                    let runner = state.runner.clone();
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        for _ in 0..200 {
+                            if runner.has_helper() || args::no_elevate() {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(100));
+                        }
+                        let profile = crate::model::Profile {
+                            id: "selftest".into(),
+                            name: "selftest".into(),
+                            gateway: "selftest.invalid".into(),
+                            username: "tester".into(),
+                            auth_method: crate::model::AuthMethod::Password,
+                            protocol: String::new(),
+                            certificate_path: String::new(),
+                            key_path: String::new(),
+                            extra_args: "--scenario=hang".into(),
+                            openconnect_path: bin.clone(),
+                            servercert: String::new(),
+                            created_at: 0,
+                            updated_at: 0,
+                        };
+                        match runner.start(&handle, &profile, std::path::Path::new(&bin), Some("x".into())) {
+                            Ok(pid) => eprintln!("[octauri] self-test: spawned child pid={pid}"),
+                            Err(e) => eprintln!("[octauri] self-test: spawn failed: {e}"),
+                        }
+                    });
                 }
             }
             // 自测钩子（仅 debug 构建）：N 毫秒后走 app.exit(0)，用于验证退出路径
@@ -360,6 +350,7 @@ pub fn run() {
             commands::disconnect,
             commands::force_kill,
             commands::conn_state,
+            commands::helper_status,
             commands::logs_tail,
             commands::logs_clear,
             commands::logs_export,

@@ -37,6 +37,8 @@ export const api = {
   disconnect: () => invoke<void>("disconnect"),
   forceKill: () => invoke<void>("force_kill"),
 
+  helperStatus: () => invoke<{ state: "ready" | "starting"; error: string }>("helper_status"),
+
   connState: () => invoke<StateSnapshot>("conn_state"),
   logsTail: (limit?: number) => invoke<LogLine[]>("logs_tail", { limit: limit ?? null }),
   logsClear: () => invoke<void>("logs_clear"),

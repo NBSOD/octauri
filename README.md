@@ -91,7 +91,8 @@ octauri/
         ├── probe.rs             跨平台环境探测
         ├── store.rs             JSON 持久化
         ├── single.rs            单实例锁（本机回环端口 + 握手）
-        ├── clipboard.rs         剪贴板写入（root 运行时切回登录用户会话）
+        ├── helper.rs            root 辅助进程 + GUI 侧客户端（macOS）
+        ├── clipboard.rs         剪贴板写入
         ├── signals.rs           SIGTERM/SIGINT/SIGHUP 转为正常退出（Unix）
         ├── prefs.rs             全局偏好
         └── model.rs             数据模型
@@ -273,13 +274,32 @@ public 仓库 Actions 分钟数不限；private 仓库 macOS runner 按 10 倍�
 | 平台 | 本程序的处理方式 |
 | --- | --- |
 | Windows | 通过内嵌清单 `requireAdministrator`，双击即弹 UAC。若便携版被以普通权限启动，界面会显示「未提权」红色告警并阻止连接。 |
-| macOS | **双击启动时自动弹出系统密码框**，输密码后以 root 运行，全程不接触终端。若在密码框中点「取消」，会给出说明并退出。也支持手动 `sudo` 启动作为兜底。 |
+| macOS | **GUI 以普通用户运行，openconnect 由 root 辅助进程拉起**。启动时弹一次系统密码框授权该辅助进程，之后连接 / 断开都不再询问。 |
 | Linux | 需从终端 `sudo ./octauri` 启动，也可配置 `pkexec` 或 sudoers 免密规则；或给 openconnect 单独 `setcap cap_net_admin+ep`。 |
 
 程序**不会**自行修改 sudoers、不会静默提权、不会写入系统目录。
-macOS 的提权走系统原生 `osascript ... with administrator privileges`，即系统标准密码框，
-权限不会驻留——每次启动都需要确认一次。授权通过后 root 实例在后台运行，
-负责弹框的启动器立即退出，不会残留进程。
+
+### 5.1 为什么 macOS 要拆成两个进程
+
+早期版本用 `osascript ... with administrator privileges` 把**整个 GUI** 提权成 root。
+这带来一个无法在应用内解决的问题：**macOS 拒绝终止 root 身份的图形程序**。
+表现为从 Dock 退出、强制退出、Cmd+Q 之后进程仍在后台，端口一直被占用，
+只能 `sudo kill -9` 清理。
+
+现在的分工：
+
+```
+Octauri（普通用户）              octauri --helper（root，系统密码框授权）
+  ├─ 界面、托盘、配置、日志面板      ├─ 拉起 openconnect
+  ├─ 监听 127.0.0.1:<随机端口>  ◄──┤ 连回该端口，转发 stdout/stderr
+  └─ 退出 = 断开 socket            └─ 读到 EOF → SIGTERM/SIGKILL openconnect → 退出
+```
+
+因为 GUI 不再是 root，Dock 退出、强制退出、注销都能正常结束它；
+GUI 无论怎么退出，socket 都会关闭，辅助进程随之清理 openconnect，
+所以也不会留下隧道或孤儿进程。
+
+辅助进程只在启动时授权一次，常驻到 GUI 退出为止。授权被拒绝时首页会显示原因。
 
 开发调试可传命令行参数（也可用同名环境变量）：
 
@@ -298,14 +318,17 @@ Octauri.app/Contents/MacOS/octauri --no-elevate --port 28430
 环境变量 `OCTAURI_NO_ELEVATE=1` 同样可跳过自动提权（此时无法建立真实隧道，
 配合 `scripts/mock-openconnect.sh` 使用）。
 
-macOS 提权后进程以 root 运行，但配置文件仍然写到**真实登录用户**的
-`~/Library/Application Support/`（通过 `stat -f %Su /dev/console` 定位），
-不会落到 `/var/root` 那种用户看不到的地方。
+macOS 上的配置文件由 GUI（普通用户）写入 `~/Library/Application Support/`，
+不会落到 `/var/root`。若你手动用 `sudo` 启动 GUI，程序会通过
+`stat -f %Su /dev/console` 定位真实登录用户并改写路径，避免配置“消失”。
 
 ### 退出行为
 
-退出 Octauri 时都会**先结束 openconnect 子进程**：发 SIGTERM 让它调用
-vpnc-script 还原路由与 DNS，1.2 秒内未退出再 SIGKILL，然后进程结束。
+退出 Octauri 时都会**先结束 openconnect**：发 SIGTERM 让它调用
+vpnc-script 还原路由与 DNS，超时未退出再 SIGKILL，然后进程结束。
+
+macOS 上这一步由 root 辅助进程完成（GUI 无权向 root 进程发信号）：
+GUI 发出 `QUIT` 或直接退出（socket 关闭），辅助进程收到后清理 openconnect 再退出。
 
 覆盖的退出入口：
 
@@ -324,10 +347,9 @@ vpnc-script 还原路由与 DNS，1.2 秒内未退出再 SIGKILL，然后进程�
 `sudo kill -9` 清理。清理完成后程序直接结束进程——macOS 上等待子进程会占用主线程，
 事件循环的自然收尾可能因此卡住，表现为端口已释放但 GUI 进程仍在。
 
-同理，**剪贴板按用户会话隔离**：root 进程直接写剪贴板，登录用户读不到。
-因此复制由后端完成——以 root 运行时通过 `launchctl asuser <登录用户 uid>`
-切换到登录会话执行 `pbcopy`（并显式指定 `LANG=en_US.UTF-8`，提权后环境变量
-被清空，不指定会导致中文丢失）。日志面板的「复制」按钮和 `Cmd+C` 都走这条路径。
+**剪贴板**：早期 GUI 以 root 运行时，剪贴板按用户会话隔离导致复制失效；
+现在 GUI 是普通用户，复制由后端直接调用 `pbcopy` 即可。代码里保留了
+`launchctl asuser` 分支，仅用于手动 `sudo` 启动的兜底场景。
 
 ---
 
@@ -479,6 +501,8 @@ npx tauri build --bundles nsis
 | 退出 Octauri 后仍有 root 进程残留 | 1.0 早期版本退出时未结束 openconnect 子进程 | 已修复：任何退出路径（托盘、Cmd+Q、SIGTERM/SIGINT/SIGHUP）都会先 SIGTERM openconnect，3 秒未退再 SIGKILL。若仍残留可 `sudo pkill -f Octauri.app` |
 | 日志出现 `** Error: The parameters were not valid.` | 原版 vpnc-script 在全隧道下查不到网络服务名（macOS） | 内置脚本已修复。若用自定义 openconnect，DNS 实际已由 scutil 配好，该报错可忽略 |
 | macOS 关闭窗口后程序仍在 | 这是设计行为 | 托盘右键「退出」或 Cmd+Q 退出 |
+| macOS 首页提示「无法建立管理员授权」 | 启动时取消了系统密码框 | 退出 Octauri 重新打开，在弹窗中允许；辅助进程只在启动时授权一次 |
+| macOS 退出后仍残留 `octauri --helper` | 1.0 早期版本的 GUI 本身是 root，系统无法终止 | 已改为「普通 GUI + root 辅助进程」。GUI 退出（含强制退出）会关闭 socket，辅助进程随之清理 openconnect 并退出 |
 
 ---
 
@@ -495,7 +519,9 @@ npx tauri build --bundles nsis
      因此重复双击仍会弹一次 UAC，通过后唤起已有窗口并退出，不会出现两个实例
    - 若该端口被其他程序占用，程序照常启动，只是本次运行不启用单实例保护；
      可用环境变量 `OCTAURI_PORT` 指定其他端口
-5. **Linux 不捆绑 openconnect**，依赖发行版包管理器安装。Windows 与 macOS（arm64）
+5. **macOS 依赖 root 辅助进程**：启动时的授权被拒绝后，本次运行无法建立连接，
+   需要退出重开。辅助进程常驻到 GUI 退出为止，不做进程间复用。
+6. **Linux 不捆绑 openconnect**，依赖发行版包管理器安装。Windows 与 macOS（arm64）
    已内置，见第 6 节。
 
 ---

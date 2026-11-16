@@ -56,16 +56,17 @@ pub fn probe(resource_openconnect: Option<PathBuf>, override_path: Option<&str>)
     }
 
     // 2) 提权状态
-    let elevated = is_elevated();
-    let elevation_hint = if elevated {
+    //    macOS：GUI 以普通用户运行，openconnect 由 root 辅助进程拉起，
+    //    因此这里不把「GUI 未提权」当作问题（否则每次启动都报一条假告警）。
+    let mut elevated = is_elevated();
+    let elevation_hint = if platform == "macos" {
+        elevated = true;
+        "openconnect 由 root 辅助进程拉起，GUI 自身以普通用户运行。".to_string()
+    } else if elevated {
         "已具备管理员/root 权限。".to_string()
     } else {
         match platform.as_str() {
             "windows" => "当前未以管理员身份运行。建立隧道需要管理员权限：请右键程序图标选择「以管理员身份运行」。".into(),
-            "macos" => format!(
-                "当前未以 root 运行，无法创建虚拟网卡。\n请从 Finder 双击 Octauri.app 启动（会自动弹出系统授权窗口），\n或在终端用 sudo 启动：\nsudo \"{}\"",
-                current_exe_string()
-            ),
             _ => format!(
                 "当前未以 root 运行。请使用 sudo 启动：\nsudo \"{}\"",
                 current_exe_string()

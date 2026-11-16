@@ -36,6 +36,12 @@ pub struct Runner {
     cert_prompted: AtomicBool,
     /// 暂存最近一次解析到的证书失败原因
     cert_reason: Mutex<String>,
+    /// root 辅助进程连接（macOS）。GUI 以普通用户运行时，
+    /// openconnect 由它以 root 拉起，日志经它回传。
+    #[cfg(target_os = "macos")]
+    helper: Mutex<Option<crate::helper::HelperLink>>,
+    /// 辅助进程回报的错误（EXEC 失败等），供 start 同步读取
+    helper_err: Mutex<Option<String>>,
 }
 
 impl Runner {
@@ -50,7 +56,125 @@ impl Runner {
             start_lock: Mutex::new(()),
             cert_prompted: AtomicBool::new(false),
             cert_reason: Mutex::new(String::new()),
+            #[cfg(target_os = "macos")]
+            helper: Mutex::new(None),
+            helper_err: Mutex::new(None),
         })
+    }
+
+    #[cfg(target_os = "macos")]
+    fn lock_helper(&self) -> MutexGuard<'_, Option<crate::helper::HelperLink>> {
+        self.helper.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[cfg(target_os = "macos")]
+    pub fn has_helper(&self) -> bool {
+        self.lock_helper().is_some()
+    }
+
+    fn clear_helper_error(&self) {
+        *self.helper_err.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+
+    /// 当前是否记录了辅助进程错误（供前端恢复状态时读取）
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub fn helper_error(&self) -> Option<String> {
+        self.helper_err
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn take_helper_error(&self) -> Option<String> {
+        self.helper_err
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take()
+    }
+
+    fn set_helper_error(&self, msg: String) {
+        *self.helper_err.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+    }
+
+    /// 处理一行 openconnect 输出：写日志、推进状态、检测证书提示。
+    /// 本地 pipe 与辅助进程两条路径共用，避免行为分叉。
+    fn handle_output_line(&self, app: &AppHandle, boot: u64, stream: &str, text: &str) {
+        if self.generation.load(Ordering::SeqCst) != boot {
+            return;
+        }
+        if text.trim().is_empty() {
+            return;
+        }
+        self.log(app, stream, text);
+        self.advance(app, boot, text);
+        self.detect_cert_prompt(app, boot, text);
+    }
+
+    /// 接入 root 辅助进程：保存写端，并起一条线程处理它回传的事件。
+    #[cfg(target_os = "macos")]
+    pub fn attach_helper(
+        self: &Arc<Self>,
+        app: AppHandle,
+        link: crate::helper::HelperLink,
+    ) -> Result<(), String> {
+        let read_stream = link.clone_stream()?;
+        *self.lock_helper() = Some(link);
+        let runner = self.clone();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            let reader = std::io::BufReader::new(read_stream);
+            for line in reader.lines() {
+                let Ok(line) = line else { break };
+                let mut it = line.splitn(3, ' ');
+                match it.next() {
+                    Some("PID") => {
+                        if let Some(pid) = it.next().and_then(|v| v.parse::<u32>().ok()) {
+                            runner.pid.store(pid, Ordering::SeqCst);
+                            runner.transition(&app, ConnState::Handshaking, "正在启动 openconnect…");
+                        }
+                    }
+                    Some("O") => {
+                        let which = it.next().unwrap_or("out");
+                        let text = it
+                            .next()
+                            .and_then(crate::helper::b64_decode)
+                            .map(|v| String::from_utf8_lossy(&v).into_owned())
+                            .unwrap_or_default();
+                        let stream = if which == "err" { "stderr" } else { "stdout" };
+                        let boot = runner.generation.load(Ordering::SeqCst);
+                        runner.handle_output_line(&app, boot, stream, &text);
+                    }
+                    Some("EXIT") => {
+                        let code = it.next().and_then(|v| v.parse::<i32>().ok()).unwrap_or(-1);
+                        let boot = runner.generation.load(Ordering::SeqCst);
+                        if runner.generation.load(Ordering::SeqCst) != boot {
+                            continue;
+                        }
+                        runner.finish_session(&app, code, code == 0);
+                    }
+                    Some("ERR") => {
+                        let msg = it
+                            .next()
+                            .and_then(crate::helper::b64_decode)
+                            .map(|v| String::from_utf8_lossy(&v).into_owned())
+                            .unwrap_or_else(|| "辅助进程执行失败".into());
+                        runner.log(&app, "app", &format!("辅助进程：{msg}"));
+                        runner.set_helper_error(msg);
+                    }
+                    _ => {}
+                }
+            }
+            // 辅助进程断开：若仍有连接，视为异常
+            runner.pid.store(0, Ordering::SeqCst);
+            if let Ok(mut slot) = runner.helper.lock() {
+                *slot = None;
+            }
+            if !matches!(runner.lock_state().state.as_str(), "idle" | "error") {
+                runner.log(&app, "app", "与辅助进程的连接已断开");
+                runner.transition(&app, ConnState::Error, "辅助进程已退出");
+            }
+        });
+        Ok(())
     }
 
     fn lock_state(&self) -> MutexGuard<'_, StateSnapshot> {
@@ -225,11 +349,50 @@ impl Runner {
             ));
         }
 
+        let argv = build_argv(profile, bin, password.is_some());
+
+        // 记录将要执行的命令行，便于运维排障（密码不在其中）
+        self.log(
+            app,
+            "app",
+            &format!("$ {} {}", bin.display(), render_args(&argv)),
+        );
+
+        // macOS：优先交给 root 辅助进程。GUI 自身以普通用户运行，
+        // 这样 Dock 退出 / Cmd+Q / 强制退出都不会因 root 身份而失效。
+        #[cfg(target_os = "macos")]
+        {
+            if self.has_helper() {
+                return self.start_via_helper(app, profile, bin, &argv, password);
+            }
+            // 未授权时直接给出原因，而不是让 openconnect 以普通用户身份失败
+            // 自测连接（--spawn）用于验证 helper 链路，未就绪时也允许走本地路径
+            if !crate::args::no_elevate() && crate::args::spawn().is_none() {
+                return Err(
+                    "尚未获得管理员授权。\n退出 Octauri 后重新打开，并在系统弹窗中输入密码允许。"
+                        .into(),
+                );
+            }
+        }
+
+        self.start_local(app, profile, bin, &argv, password)
+    }
+
+    /// 本地直接拉起 openconnect（Windows / Linux，以及 macOS 未启用辅助进程时）。
+    fn start_local(
+        self: &Arc<Self>,
+        app: &AppHandle,
+        profile: &crate::model::Profile,
+        bin: &Path,
+        argv: &[String],
+        password: Option<String>,
+    ) -> Result<u32, String> {
         let mut cmd = Command::new(bin);
-        cmd.stdin(Stdio::piped())
+        cmd.args(argv)
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
-        // 强制英文输出：状态机（Connected as / CSTP connected）与故障分类均按
+        // 强制英文输出：状态机（Connected as / Configured as）与故障分类均按
         // openconnect 的英文原文匹配。openconnect 带 gettext 翻译且翻译目录路径
         // 编译期写死，系统为中文时会输出「已配置为…」，导致状态停在「握手中」。
         // LANGUAGE 优先级高于 LC_ALL，必须一并清除。
@@ -245,68 +408,10 @@ impl Runner {
             cmd.creation_flags(CREATE_NO_WINDOW);
         }
 
-        // ---- 认证参数 ----
-        if !profile.username.is_empty() {
-            cmd.arg(format!("--user={}", profile.username));
-        }
-        match profile.auth_method {
-            crate::model::AuthMethod::Password => {
-                cmd.arg("--passwd-on-stdin");
-            }
-            crate::model::AuthMethod::Certificate => {
-                cmd.arg(format!("--certificate={}", profile.certificate_path));
-                if !profile.key_path.is_empty() {
-                    cmd.arg(format!("--sslkey={}", profile.key_path));
-                }
-                if password.is_some() {
-                    // 证书私钥口令同样走 stdin
-                    cmd.arg("--passwd-on-stdin");
-                }
-            }
-        }
-        if !profile.protocol.is_empty() {
-            cmd.arg(format!("--protocol={}", profile.protocol));
-        }
-        // 用户已确认过的服务器证书指纹：跳过 CA 校验但绑定到该证书，
-        // 比无条件信任安全（证书更换后会再次询问）
-        if !profile.servercert.is_empty() {
-            cmd.arg(format!("--servercert={}", profile.servercert));
-        }
-        // 内置运行时会自带 vpnc-script，显式传入以免依赖系统默认路径
-        // （openconnect 默认只在 /etc/vpnc/vpnc-script 与 PATH 中查找）
-        if let Some(script) = resolve_vpnc_script(bin) {
-            cmd.arg(format!("--script={}", script.display()));
-        }
-        // 内置运行时自带 CA bundle：GnuTLS 默认信任库是编译期写死的 Homebrew
-        // 路径，在未安装 openconnect 的机器上会导致服务器证书校验失败。
-        // 用户可通过额外参数里的 --cafile 覆盖此默认值。
-        if let Some(ca) = sibling_file(bin, &["ca-bundle.pem", "ca-certificates.crt"]) {
-            cmd.arg(format!("--cafile={}", ca.display()));
-        }
-        // ---- 用户自定义参数 ----
-        for arg in split_args(&profile.extra_args) {
-            cmd.arg(arg);
-        }
-        // ---- 网关（必须位于参数末尾）----
-        cmd.arg(&profile.gateway);
-
-        // 记录将要执行的命令行，便于运维排障（密码不在其中）
-        self.log(
-            app,
-            "app",
-            &format!("$ {} {}", bin.display(), render_args(&cmd)),
-        );
-
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| spawn_error_hint(&e, bin))?;
+        let mut child = cmd.spawn().map_err(|e| spawn_error_hint(&e, bin))?;
 
         let pid = child.id();
-        let boot = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        self.pid.store(pid, Ordering::SeqCst);
-        self.user_stop.store(false, Ordering::SeqCst);
-        self.cert_prompted.store(false, Ordering::SeqCst);
-        *self.cert_reason.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
+        let boot = self.begin_session(profile);
 
         // 写入凭据后立即关闭 stdin
         if let Some(mut stdin) = child.stdin.take() {
@@ -324,16 +429,6 @@ impl Runner {
             }
             drop(stdin);
         }
-
-        // 状态置为握手
-        {
-            let mut s = self.lock_state();
-            s.profile_id = Some(profile.id.clone());
-            s.profile_name = Some(profile.name.clone());
-            s.gateway = Some(profile.gateway.clone());
-            s.tunnel_ip = None;
-        }
-        self.transition(app, ConnState::Handshaking, "正在启动 openconnect…");
 
         // stdout / stderr 分流读取
         if let Some(out) = child.stdout.take() {
@@ -353,32 +448,14 @@ impl Runner {
             if waiter_self.generation.load(Ordering::SeqCst) != boot {
                 return;
             }
-            waiter_self.pid.store(0, Ordering::SeqCst);
-            let by_user = waiter_self.user_stop.swap(false, Ordering::SeqCst);
             match status {
-                Ok(st) => {
-                    let code = st.code().map(|c| c.to_string()).unwrap_or_else(|| "signal".into());
-                    if by_user {
-                        waiter_self.log(&waiter_app, "app", "openconnect 进程已终止");
-                        waiter_self.transition(&waiter_app, ConnState::Idle, "已断开");
-                    } else if st.success() {
-                        waiter_self.log(&waiter_app, "app", "openconnect 正常退出");
-                        waiter_self.transition(&waiter_app, ConnState::Idle, "连接已结束");
-                    } else {
-                        waiter_self.log(
-                            &waiter_app,
-                            "app",
-                            &format!("openconnect 异常退出，退出码 {code}（请查看上方日志定位原因）"),
-                        );
-                        waiter_self.log(&waiter_app, "app", EXIT_CODE_HINT);
-                        waiter_self.transition(
-                            &waiter_app,
-                            ConnState::Error,
-                            &format!("连接异常断开（退出码 {code}）"),
-                        );
-                    }
-                }
+                Ok(st) => waiter_self.finish_session(
+                    &waiter_app,
+                    st.code().unwrap_or(-1),
+                    st.success(),
+                ),
                 Err(e) => {
+                    waiter_self.pid.store(0, Ordering::SeqCst);
                     waiter_self.log(&waiter_app, "app", &format!("等待子进程结束失败：{e}"));
                     waiter_self.transition(&waiter_app, ConnState::Error, "无法获取进程退出状态");
                 }
@@ -386,6 +463,107 @@ impl Runner {
         });
 
         Ok(pid)
+    }
+
+    /// 通过 root 辅助进程拉起 openconnect（macOS）。
+    fn start_via_helper(
+        self: &Arc<Self>,
+        app: &AppHandle,
+        profile: &crate::model::Profile,
+        bin: &Path,
+        argv: &[String],
+        password: Option<String>,
+    ) -> Result<u32, String> {
+        // 第一个参数必须是可执行文件本身：辅助进程据此 spawn
+        let mut line = format!("EXEC {}", crate::helper::b64_encode(bin.to_string_lossy().as_bytes()));
+        for a in argv {
+            line.push(' ');
+            line.push_str(&crate::helper::b64_encode(a.as_bytes()));
+        }
+        {
+            let mut slot = self.lock_helper();
+            let Some(link) = slot.as_mut() else {
+                return Err("辅助进程未就绪，请重新授权".into());
+            };
+            link.send(&line)?;
+            if let Some(pw) = password.as_deref().filter(|s| !s.is_empty()) {
+                link.send(&format!(
+                    "STDIN {}",
+                    crate::helper::b64_encode(pw.as_bytes())
+                ))?;
+            } else {
+                link.send("STDIN ")?;
+            }
+        }
+
+        self.clear_helper_error();
+        // generation 由 begin_session 推进；读线程以它判断输出归属
+        let _boot = self.begin_session(profile);
+
+        // 等辅助进程回报 pid（或错误）
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        loop {
+            if let Some(err) = self.take_helper_error() {
+                self.pid.store(0, Ordering::SeqCst);
+                self.transition(app, ConnState::Idle, "未连接");
+                return Err(err);
+            }
+            if let Some(pid) = self.running_pid() {
+                return Ok(pid);
+            }
+            if std::time::Instant::now() >= deadline {
+                self.pid.store(0, Ordering::SeqCst);
+                self.transition(app, ConnState::Idle, "未连接");
+                return Err("辅助进程未响应（15 秒超时）".into());
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+    }
+
+    /// 一次连接开始时的公共初始化，返回本次的 generation。
+    fn begin_session(&self, profile: &crate::model::Profile) -> u64 {
+        let boot = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
+        self.user_stop.store(false, Ordering::SeqCst);
+        self.cert_prompted.store(false, Ordering::SeqCst);
+        *self.cert_reason.lock().unwrap_or_else(|e| e.into_inner()) = String::new();
+        {
+            let mut s = self.lock_state();
+            s.profile_id = Some(profile.id.clone());
+            s.profile_name = Some(profile.name.clone());
+            s.gateway = Some(profile.gateway.clone());
+            s.tunnel_ip = None;
+        }
+        boot
+    }
+
+    /// 连接结束时的公共收尾（本地 waiter 与 helper 读线程共用）。
+    fn finish_session(&self, app: &AppHandle, code: i32, success: bool) {
+        self.pid.store(0, Ordering::SeqCst);
+        let by_user = self.user_stop.swap(false, Ordering::SeqCst);
+        let code_text = if code < 0 {
+            "signal".to_string()
+        } else {
+            code.to_string()
+        };
+        if by_user {
+            self.log(app, "app", "openconnect 进程已终止");
+            self.transition(app, ConnState::Idle, "已断开");
+        } else if success {
+            self.log(app, "app", "openconnect 正常退出");
+            self.transition(app, ConnState::Idle, "连接已结束");
+        } else {
+            self.log(
+                app,
+                "app",
+                &format!("openconnect 异常退出，退出码 {code_text}（请查看上方日志定位原因）"),
+            );
+            self.log(app, "app", EXIT_CODE_HINT);
+            self.transition(
+                app,
+                ConnState::Error,
+                &format!("连接异常断开（退出码 {code_text}）"),
+            );
+        }
     }
 
     /// 终止连接。`hard=true` 立即 SIGKILL / taskkill /F。
@@ -405,6 +583,38 @@ impl Runner {
                 "请求 openconnect 主动断开（SIGTERM）"
             },
         );
+        // macOS：openconnect 由 root 辅助进程拉起，本地进程无权发信号
+        #[cfg(target_os = "macos")]
+        if self.has_helper() {
+            let send = {
+                let mut slot = self.lock_helper();
+                match slot.as_mut() {
+                    Some(link) => link.send(&format!("SIG {}", if hard { "kill" } else { "term" })),
+                    None => Err("辅助进程连接已断开".to_string()),
+                }
+            };
+            if let Err(e) = send {
+                self.user_stop.store(false, Ordering::SeqCst);
+                self.transition(app, ConnState::Connected, "终止请求失败，进程仍在运行");
+                return Err(e);
+            }
+            if !hard {
+                // 6 秒宽限后仍存活则强制终止，防止卡死残留
+                let this = self.clone();
+                let app2 = app.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(6));
+                    if this.running_pid() == Some(pid) {
+                        this.log(&app2, "app", "6 秒内未退出，升级为强制终止");
+                        if let Some(link) = this.lock_helper().as_mut() {
+                            let _ = link.send("SIG kill");
+                        }
+                    }
+                });
+            }
+            return Ok(());
+        }
+
         if let Err(e) = terminate(pid, hard) {
             // 终止失败，回滚「用户主动停止」标记，避免掩盖后续异常退出原因
             self.user_stop.store(false, Ordering::SeqCst);
@@ -434,6 +644,16 @@ impl Runner {
     /// 先发 SIGTERM，让 openconnect 调用 vpnc-script 还原路由与 DNS；
     /// 超时后再发 SIGKILL。
     pub fn shutdown(&self) {
+        // macOS：openconnect 归 root 辅助进程管，本地不能直接发信号。
+        // 通知它退出，它会先结束 openconnect（还原路由与 DNS）再退出；
+        // 即使这里不等它，GUI 退出导致 socket 关闭也会让它走同一清理路径。
+        #[cfg(target_os = "macos")]
+        if let Some(link) = self.lock_helper().as_mut() {
+            let _ = link.send("QUIT");
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            return;
+        }
+
         let Some(pid) = self.running_pid() else {
             return;
         };
@@ -511,12 +731,7 @@ fn pump<R: Read + Send + 'static>(
             if runner.generation.load(Ordering::SeqCst) != boot {
                 break;
             }
-            if text.trim().is_empty() {
-                continue;
-            }
-            runner.log(&app, stream, &text);
-            runner.advance(&app, boot, &text);
-            runner.detect_cert_prompt(&app, boot, &text);
+            runner.handle_output_line(&app, boot, stream, &text);
         }
     });
 }
@@ -616,18 +831,67 @@ fn classify(text: &str) -> (&'static str, Option<&'static str>) {
 }
 
 /// 生成带引号的命令行字符串（仅用于日志展示）。
-fn render_args(cmd: &Command) -> String {
-    cmd.get_args()
+fn render_args(args: &[String]) -> String {
+    args.iter()
         .map(|a| {
-            let s = a.to_string_lossy();
-            if s.contains(' ') {
-                format!("\"{s}\"")
+            if a.contains(' ') {
+                format!("\"{a}\"")
             } else {
-                s.to_string()
+                a.clone()
             }
         })
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// 构造 openconnect 的命令行参数（不含可执行文件本身）。
+///
+/// 本地拉起与交root辅助进程执行共用，保证两条路径参数一致。
+fn build_argv(
+    profile: &crate::model::Profile,
+    bin: &Path,
+    has_password: bool,
+) -> Vec<String> {
+    let mut a: Vec<String> = Vec::new();
+    if !profile.username.is_empty() {
+        a.push(format!("--user={}", profile.username));
+    }
+    match profile.auth_method {
+        crate::model::AuthMethod::Password => a.push("--passwd-on-stdin".into()),
+        crate::model::AuthMethod::Certificate => {
+            a.push(format!("--certificate={}", profile.certificate_path));
+            if !profile.key_path.is_empty() {
+                a.push(format!("--sslkey={}", profile.key_path));
+            }
+            if has_password {
+                // 证书私钥口令同样走 stdin
+                a.push("--passwd-on-stdin".into());
+            }
+        }
+    }
+    if !profile.protocol.is_empty() {
+        a.push(format!("--protocol={}", profile.protocol));
+    }
+    // 用户已确认过的服务器证书指纹：跳过 CA 校验但绑定到该证书，
+    // 比无条件信任安全（证书更换后会再次询问）
+    if !profile.servercert.is_empty() {
+        a.push(format!("--servercert={}", profile.servercert));
+    }
+    // 内置运行时会自带 vpnc-script，显式传入以免依赖系统默认路径
+    // （openconnect 默认只在 /etc/vpnc/vpnc-script 与 PATH 中查找）
+    if let Some(script) = resolve_vpnc_script(bin) {
+        a.push(format!("--script={}", script.display()));
+    }
+    // 内置运行时自带 CA bundle：GnuTLS 默认信任库是编译期写死的 Homebrew
+    // 路径，在未安装 openconnect 的机器上会导致服务器证书校验失败。
+    // 用户可通过额外参数里的 --cafile 覆盖此默认值。
+    if let Some(ca) = sibling_file(bin, &["ca-bundle.pem", "ca-certificates.crt"]) {
+        a.push(format!("--cafile={}", ca.display()));
+    }
+    a.extend(split_args(&profile.extra_args));
+    // 网关必须位于参数末尾
+    a.push(profile.gateway.clone());
+    a
 }
 
 /// 按 shell 习惯切分自定义参数，支持单/双引号。

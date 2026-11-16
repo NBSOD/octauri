@@ -174,11 +174,18 @@ pub fn connect(
         .file_name()
         .map(|n| n.to_string_lossy().to_lowercase().contains("mock"))
         .unwrap_or(false);
+    // macOS：GUI 以普通用户运行，openconnect 由 root 辅助进程拉起，
+    // 因此不要求 GUI 自身已提权（这是修复「退出后进程残留」的架构前提）。
+    #[cfg(target_os = "macos")]
+    let raised_by_helper = true;
+    #[cfg(not(target_os = "macos"))]
+    let raised_by_helper = false;
+
     if is_mock {
         state
             .runner
             .log(&app, "app", "检测到 mock 可执行文件，已跳过提权校验（仅用于本地联调）");
-    } else if !report.elevated {
+    } else if !raised_by_helper && !report.elevated {
         return Err(format!(
             "权限不足，无法建立隧道。\n{}",
             report.elevation_hint
@@ -216,6 +223,25 @@ pub fn force_kill(app: AppHandle, state: State<'_, AppState>) -> Result<(), Stri
         return Err("当前没有运行中的 openconnect 进程".into());
     }
     state.runner.stop(&app, true)
+}
+
+/// root 辅助进程（macOS）是否就绪。GUI 以普通用户运行时，
+/// 连接能力依赖它；未就绪且用户已取消授权时，前端给出明确提示。
+#[tauri::command]
+pub fn helper_status(state: State<'_, AppState>) -> serde_json::Value {
+    #[cfg(target_os = "macos")]
+    {
+        let ready = state.runner.has_helper();
+        serde_json::json!({
+            "state": if ready { "ready" } else { "starting" },
+            "error": state.runner.helper_error().unwrap_or_default(),
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = &state;
+        serde_json::json!({ "state": "ready", "error": "" })
+    }
 }
 
 #[tauri::command]

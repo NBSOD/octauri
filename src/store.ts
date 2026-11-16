@@ -61,6 +61,14 @@ export const state = reactive({
   alert: null as AlertBox | null,
   /** 服务器证书待确认 */
   certPrompt: null as CertPrompt | null,
+  /**
+   * root 辅助进程状态（macOS）。GUI 以普通用户运行，openconnect 由它以 root 拉起。
+   * 授权在启动时进行一次，失败时连接不可用。
+   */
+  helper: {
+    state: "starting" as "starting" | "ready" | "error",
+    error: "",
+  },
 });
 
 export const selectedProfile = computed<Profile | null>(
@@ -158,6 +166,15 @@ export async function initApp() {
   await listen<CertPrompt>("oc://cert-prompt", (e) => {
     state.certPrompt = e.payload;
   });
+  await listen("oc://helper-ready", () => {
+    state.helper.state = "ready";
+    state.helper.error = "";
+    void refreshEnv();
+  });
+  await listen<string>("oc://helper-error", (e) => {
+    state.helper.state = "error";
+    state.helper.error = String(e.payload ?? "未知错误");
+  });
 
   try {
     state.conn = await api.connState();
@@ -170,6 +187,19 @@ export async function initApp() {
 
   await refreshProfiles();
   await refreshEnv();
+
+  // 恢复辅助进程状态：非 macOS 恒为 ready，避免界面一直显示「正在请求授权」
+  try {
+    const hs = await api.helperStatus();
+    if (hs.error) {
+      state.helper.state = "error";
+      state.helper.error = hs.error;
+    } else if (hs.state === "ready" || state.info?.platform !== "macos") {
+      state.helper.state = "ready";
+    }
+  } catch {
+    /* 保持默认 starting */
+  }
   state.ready = true;
 }
 

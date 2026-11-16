@@ -1,12 +1,11 @@
 //! 系统剪贴板写入（后端实现）。
 //!
-//! 为什么不用浏览器的 navigator.clipboard：macOS 上本程序经系统密码框以 root
-//! 运行，而剪贴板（pasteboard）按用户会话隔离。root 进程写入的是 root 自己的
-//! 剪贴板，登录用户的会话里读不到——表现为「复制按钮和 Cmd+C 都没反应」。
+//! 历史背景：早期版本把整个 GUI 以 root 运行，而剪贴板（pasteboard）按用户会话
+//! 隔离，root 写入的是 root 自己的剪贴板，登录用户读不到——表现为「复制没反应」。
+//! 当时用 `launchctl asuser <uid>` 切回登录会话解决。
 //!
-//! 解决：以 root 运行时，通过 `launchctl asuser <登录用户 uid>` 切换到登录
-//! 用户的会话再执行 pbcopy。注意 pbcopy 依赖 LANG 判断编码，sudo/osascript
-//! 提权后环境变量被清空，必须显式指定 UTF-8，否则中文会丢失。
+//! 现在 GUI 以普通用户运行（openconnect 交给 root 辅助进程），直接写即可。
+//! `launchctl asuser` 分支保留，用于用户手动以 sudo 启动的兜底场景。
 
 use std::io::Write;
 use std::process::{Command, Stdio};
