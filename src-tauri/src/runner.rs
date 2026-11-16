@@ -132,7 +132,7 @@ impl Runner {
         }
         let lower = text.to_lowercase();
         let current = self.lock_state().state.clone();
-        if lower.contains("connected as") {
+        if is_tunnel_up_line(&lower) {
             if let Some(ip) = parse_tunnel_ip(text) {
                 self.lock_state().tunnel_ip = Some(ip);
             }
@@ -496,10 +496,21 @@ fn pump<R: Read + Send + 'static>(
     });
 }
 
-/// 从 "Connected as 10.255.225.16, using SSL, ..." 中提取 IP。
+/// 隧道建立标志行。openconnect 不同版本措辞不同：
+///   旧版：  "Connected as 10.x.x.x, using SSL, with DTLS disabled"
+///   9.x：   "Configured as 10.x.x.x, with SSL connected and DTLS disabled"
+const TUNNEL_UP_PREFIXES: [&str; 2] = ["connected as ", "configured as "];
+
+fn is_tunnel_up_line(lower: &str) -> bool {
+    TUNNEL_UP_PREFIXES.iter().any(|k| lower.contains(k))
+}
+
+/// 从隧道建立标志行中提取分配到的 IP。
 fn parse_tunnel_ip(text: &str) -> Option<String> {
     let lower = text.to_lowercase();
-    let idx = lower.find("connected as ")? + "connected as ".len();
+    let idx = TUNNEL_UP_PREFIXES
+        .iter()
+        .find_map(|k| lower.find(k).map(|i| i + k.len()))?;
     let ip: String = text[idx..]
         .chars()
         .take_while(|c| c.is_ascii_hexdigit() || *c == '.' || *c == ':')
@@ -547,7 +558,7 @@ fn classify(text: &str) -> (&'static str, Option<&'static str>) {
     // 成功标志：必须先于 DTLS 判断。成功行形如
     // "Connected as 10.x, using SSL, with DTLS disabled"，含 "dtls" 字样，
     // 若后判断会被误归为 DTLS 信息行而不显示为成功。
-    if has("connected as") || has("esp session established") {
+    if is_tunnel_up_line(&l) || has("esp session established") {
         return ("success", None);
     }
     // DTLS 相关（降级为警告，不阻断连接）
@@ -735,10 +746,24 @@ mod tests {
     /// 中文输出不应被误判为成功——这正是本次缺陷的成因，
     /// 修复方式是在子进程层面强制 LC_ALL=C，而不是让分类器去适配多语言。
     #[test]
+    fn classifies_openconnect_921_configured_line() {
+        assert_eq!(
+            classify("Configured as 10.255.225.16, with SSL connected and DTLS disabled").0,
+            "success"
+        );
+    }
+
+    #[test]
     fn parses_tunnel_ip() {
         use super::parse_tunnel_ip;
         assert_eq!(
             parse_tunnel_ip("Connected as 10.255.225.16, using SSL, with DTLS disabled").as_deref(),
+            Some("10.255.225.16")
+        );
+        // openconnect 9.21 实际输出（取自用户网关日志原文）
+        assert_eq!(
+            parse_tunnel_ip("Configured as 10.255.225.16, with SSL connected and DTLS disabled")
+                .as_deref(),
             Some("10.255.225.16")
         );
         assert_eq!(parse_tunnel_ip("CSTP connected. DPD 30"), None);
