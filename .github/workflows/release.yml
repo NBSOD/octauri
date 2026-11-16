@@ -1,0 +1,136 @@
+name: build
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-latest
+            label: macOS-arm64
+            args: "--target aarch64-apple-darwin"
+            targets: "aarch64-apple-darwin"
+          - platform: ubuntu-22.04
+            label: Linux-deb
+            args: "--bundles deb"
+            targets: ""
+          - platform: windows-latest
+            label: Windows-nsis
+            args: ""
+            targets: ""
+
+    runs-on: ${{ matrix.platform }}
+    name: ${{ matrix.label }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装 Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          # 仅构建 Apple Silicon（arm64）产物
+          targets: ${{ matrix.targets }}
+
+      - name: 缓存 Rust 构建产物
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: 安装 Linux 系统依赖
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            libxdo-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libdbus-1-dev \
+            build-essential \
+            curl wget file patchelf
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      - name: 检查 Windows 捆绑的 openconnect 运行时
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: |
+          if [ -f "src-tauri/resources/openconnect/openconnect.exe" ]; then
+            echo "✅ 已找到内置 openconnect.exe"
+            ls -la src-tauri/resources/openconnect/
+          else
+            echo "::warning::src-tauri/resources/openconnect/openconnect.exe 不存在，本次产物将不含内置 openconnect，用户需自行指定路径。"
+          fi
+
+      - name: 校验 macOS 内置运行时
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        run: |
+          OC=src-tauri/resources/openconnect/macos-arm64/openconnect
+          if [ ! -x "$OC" ]; then
+            echo "::error::缺少内置 openconnect，请在本机执行 scripts/bundle-openconnect-macos.sh 后提交 macos-arm64/ 目录"
+            exit 1
+          fi
+          "$OC" --version
+
+      # 有 tag 时创建草稿 release；手动触发时只构建并上传 artifact
+      - name: 构建并打包
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # 以下变量留空时 Tauri 自动跳过签名与公证，无需删改 workflow。
+          # 配置方式见 README「GitHub Actions 自动打包」一节。
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+          releaseName: "Octauri ${{ github.ref_name }}"
+          releaseBody: "安装与部署须知见仓库 README。macOS 未签名版本首次打开需右键→打开，或执行 xattr -dr com.apple.quarantine。"
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      # Windows 便携免安装版（exe + openconnect 运行时，U 盘直接可用）
+      - name: 打包 Windows 便携版
+        if: matrix.platform == 'windows-latest'
+        shell: pwsh
+        run: |
+          $out = "portable/Octauri-portable"
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item "src-tauri/target/release/octauri.exe" "$out/" -Force
+          if (Test-Path "src-tauri/resources/openconnect") {
+            Copy-Item -Recurse "src-tauri/resources/openconnect" "$out/openconnect" -Force
+          }
+          Compress-Archive -Path "$out/*" -DestinationPath "Octauri-portable-windows-x64.zip" -Force
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.label }}
+          if-no-files-found: warn
+          path: |
+            src-tauri/target/**/release/bundle/nsis/*.exe
+            src-tauri/target/**/release/bundle/dmg/*.dmg
+            src-tauri/target/**/release/bundle/deb/*.deb
+            Octauri-portable-windows-x64.zip

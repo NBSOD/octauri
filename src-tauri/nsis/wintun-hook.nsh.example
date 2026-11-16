@@ -1,0 +1,38 @@
+; ============================================================
+;  可选：wintun 驱动部署钩子（示例，默认未启用）
+; ============================================================
+;
+; 说明：
+;   本文件是「外层 NSIS 安装脚本」的示例片段。主程序自身不做驱动
+;   安装，仅在使用时检测 wintun.dll 是否存在并给出提示。
+;
+; 启用步骤：
+;   1. 复制本文件为 src-tauri/nsis/wintun-hook.nsh
+;   2. 在 tauri.conf.json 的 bundle.windows.nsis 中加入：
+;        "installerHooks": "nsis/wintun-hook.nsh"
+;   3. 把 wintun.dll 放在与安装包 exe 相同的目录（构建产物同目录），
+;      或修改下面的源路径。
+;
+; 设计原则：
+;   · 只复制 DLL，不注册服务、不改注册表、不写系统目录；
+;   · 目标已存在时不覆盖（避免破坏其他软件共用的 wintun 版本）；
+;   · 源文件缺失时仅提示，不中断安装。
+
+!macro NSIS_HOOK_POSTINSTALL
+  DetailPrint "检查 wintun 虚拟网卡驱动..."
+  IfFileExists "$INSTDIR\wintun.dll" wintun_gui_done
+  IfFileExists "$EXEDIR\wintun.dll" 0 wintun_gui_missing
+    CopyFiles /SILENT "$EXEDIR\wintun.dll" "$INSTDIR\wintun.dll"
+    DetailPrint "wintun.dll 已部署到 $INSTDIR"
+    Goto wintun_gui_done
+  wintun_gui_missing:
+    MessageBox MB_ICONINFORMATION|MB_OK "未随安装包提供 wintun.dll。$\r$\n$\r$\n若需使用 Windows 平台连接功能，请从 https://www.wintun.net/ 下载对应架构的 wintun.dll 并放入：$\r$\n$INSTDIR"
+    Goto wintun_gui_done
+  wintun_gui_done:
+!macroend
+
+!macro NSIS_HOOK_PREUNINSTALL
+  ; 不删除 wintun.dll：它可能被其他网络工具共享使用。
+  ; 也不删除用户配置（profiles.json / prefs.json），避免卸载即丢配置。
+  DetailPrint "保留 wintun.dll 与用户配置，跳过清理。"
+!macroend

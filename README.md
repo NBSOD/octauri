@@ -1,0 +1,521 @@
+# Octauri
+
+**Rust + Tauri GUI for the openconnect CLI** · Windows / macOS / Linux
+
+openconnect 命令行的图形外壳（Tauri v2 + Vue 3 + TypeScript），一套源码可编译
+Windows / macOS / Linux 三端。
+
+> 本项目与 OpenConnect 官方无任何从属关系，是独立开发的第三方图形外壳。
+
+> 本项目由 AI 编程助手在人类指导下开发，代码经人工审阅、修改与实机验证。
+> 详见 [11. 开发方式说明](#11-开发方式说明)。
+
+> ## ⚠️ 项目定位（先读这一段）
+>
+> **本项目是纯套壳程序。**
+>
+> - 不含任何 VPN / DTLS / TLS / CSP 协议实现；
+> - 不含 TUN/TAP 网卡逻辑，不操作路由表，不修改 DNS；
+> - 不含内核驱动，也不安装 wintun 驱动；
+> - 全部隧道能力由外部 `openconnect` 可执行文件提供，本程序通过子进程拉起它、
+>   传递参数、采集 `stdout`/`stderr`、并在需要时终止它。
+>
+> 换句话说：**openconnect 能连上的，它就能连；openconnect 连不上的，它也连不上。**
+
+---
+
+## 1. 功能概览
+
+| 模块 | 能力 |
+| --- | --- |
+| 多配置管理 | 本地 JSON 持久化；新建 / 编辑 / 删除 / 导入 / 导出；每配置独立可执行文件路径与额外参数 |
+| 凭据 | 密码存入系统钥匙串（macOS Keychain / Windows 凭据管理器 / Linux Secret Service），JSON 中不落明文；或每次连接手动输入 |
+| 连接控制 | 一键连接 / 断开；优雅终止（SIGTERM）→ 6 秒宽限 → 强制 SIGKILL；独立「强制终止」按钮处理卡死进程 |
+| 状态可视化 | 未连接 → 握手进行中 → 已连通 → 异常断开；含连接时长、pid、握手超时提醒 |
+| 实时日志 | 流式输出；证书 / 认证 / 握手 / DTLS / 路由 标签着色；关键字检索与高亮；一键复制全部；导出到文件；前后端双重缓冲上限 |
+| 托盘 | 最小化到托盘；右键菜单：连接 / 断开 / 打开窗口 / 退出；左键唤起窗口 |
+| 跨平台 | Windows / macOS 内置运行时优先，找不到再回退系统安装；Linux 走 PATH；各自检测 wintun / utun / tun |
+
+---
+
+## 2. 目录结构
+
+```
+octauri/
+├── .github/
+│   └── workflows/release.yml    三平台 CI 构建（dmg / nsis+便携版 / deb）
+├── .gitignore
+├── .gitattributes               二进制与行尾规则
+├── package.json                 前端依赖与脚本
+├── vite.config.ts               Vite 配置（固定 1420 端口）
+├── index.html
+├── scripts/
+│   ├── gen-icons.py                 零依赖图标生成（PNG/ICO/ICNS）
+│   ├── bundle-openconnect-macos.sh  生成 macOS 自包含运行时（重写 install_name + 重签名）
+│   └── mock-openconnect.sh          假 openconnect，无网关时本地联调
+├── src/                         Vue 3 前端
+│   ├── main.ts
+│   ├── App.vue                  三栏布局装配 / 日志栏拖拽 / 对话框编排
+│   ├── api.ts                   后端命令薄封装
+│   ├── store.ts                 全局状态与业务动作（无 Pinia）
+│   ├── types.ts                 与 Rust 侧对齐的类型定义
+│   ├── styles.css              设计系统（CSS 变量 + 深浅主题）
+│   └── components/
+│       ├── TopBar.vue           品牌 / 状态胶囊 / 主题 / 设置 / 关于
+│       ├── ProfileList.vue      左栏：配置列表 + 导入导出
+│       ├── ControlPanel.vue     中栏：状态卡 / 环境告警 / 配置详情
+│       ├── LogPanel.vue         右栏：日志流 / 检索 / 复制 / 导出
+│       ├── ProfileDialog.vue    配置编辑表单
+│       ├── SettingsDialog.vue   主题 / 全局 openconnect 路径 / 日志上限
+│       ├── AboutDialog.vue      LGPL 版权声明
+│       ├── PasswordDialog.vue   连接时密码输入
+│       ├── AlertDialog.vue      异常弹窗
+│       ├── Toasts.vue           轻提示
+│       └── Icon.vue             内联 SVG 图标集
+└── src-tauri/                   Rust 后端
+    ├── Cargo.toml
+    ├── build.rs                 嵌入 Windows 管理员清单
+    ├── tauri.conf.json
+    ├── windows-app-manifest.xml requireAdministrator + PerMonitorV2 DPI
+    ├── capabilities/default.json
+    ├── icons/                   生成的图标（PNG / ICO / ICNS）
+    ├── resources/openconnect/
+    │   ├── macos-arm64/        内置的 macOS 运行时（自包含，随仓库分发）
+    │   └── README.txt          Windows 运行时放置说明
+    └── src/
+        ├── main.rs
+        ├── lib.rs               托盘、窗口行为、命令注册
+        ├── commands.rs          Tauri 命令层（唯一后端入口）
+        ├── runner.rs            子进程生命周期 / 日志泵 / 信号终止
+        ├── probe.rs             跨平台环境探测
+        ├── store.rs             JSON 持久化 + 钥匙串
+        ├── prefs.rs             全局偏好
+        └── model.rs             数据模型
+```
+
+---
+
+## 3. 环境依赖
+
+### 3.1 通用
+
+| 依赖 | 版本 | 说明 |
+| --- | --- | --- |
+| Node.js | ≥ 18（实测 22） | 前端构建 |
+| Rust | ≥ 1.77（实测 1.100） | `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \| sh -s -- -y` |
+| openconnect | ≥ 8.0 建议 9.x | **运行必需**，非构建依赖 |
+
+### 3.2 各平台额外要求
+
+**macOS**
+
+```bash
+xcode-select --install     # 或安装完整 Xcode
+```
+
+macOS **运行时不需要**安装 openconnect——仓库已内置自包含运行时（见 6.1）。
+只有需要更新内置版本、或要为目标机器重新打包时才装：
+
+```bash
+brew install openconnect && ./scripts/bundle-openconnect-macos.sh
+```
+
+**Linux (Debian/Ubuntu)**
+
+```bash
+sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+     libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev \
+     libdbus-1-dev pkg-config      # libdbus-1-dev 供 keyring 使用
+sudo apt install openconnect
+```
+
+**Windows**
+
+- 安装 [Microsoft C++ 生成工具](https://visualstudio.microsoft.com/visual-cpp-build-tools/)（勾选「使用 C++ 的桌面开发」）
+- WebView2 运行时（Win10 1803+ / Win11 通常已内置）
+- 自备 `openconnect.exe` 及其依赖 DLL，见 [第 6 节](#6-windows-部署重点)
+
+`keyring` 在 Linux 走 Secret Service，桌面环境需有 `gnome-keyring` / `kwallet`
+并处于解锁状态；不可用时程序会提示并退化为「每次手动输入密码」，不影响连接。
+
+---
+
+## 4. 开发与编译
+
+```bash
+npm install
+npm run icons        # 仅在需要重新生成图标时执行（需要 python3）
+npm run dev          # 开发模式（热重载）
+npm run build        # 生产构建 + 打包当前平台安装包
+npm run typecheck    # 前端类型检查
+```
+
+单独构建二进制（不打包）：
+
+```bash
+npx tauri build --debug --no-bundle     # 产物：src-tauri/target/debug/octauri
+npx tauri build --no-bundle             # 产物：src-tauri/target/release/octauri
+```
+
+打包目标在 `src-tauri/tauri.conf.json` 的 `bundle.targets` 中配置，默认
+`["nsis", "app", "dmg", "deb", "appimage"]`，实际只会构建当前平台的可用目标。
+
+> **交叉编译提示**：Tauri 不支持跨平台打包安装包。Windows 包须在 Windows 上构建，
+> macOS 包须在 macOS 上构建。建议使用 GitHub Actions 或本地虚拟机。
+
+---
+
+### 本地联调（无需真实网关）
+
+`scripts/mock-openconnect.sh` 是一个假的 openconnect，只打印日志、不建网卡、不要 root，
+用于在没有 VPN 环境时验证完整链路：子进程拉起 → 参数传递 → 日志流 → 状态机 → 断开 / 强制终止。
+
+```bash
+chmod +x scripts/mock-openconnect.sh
+
+# 在配置里填写：
+#   openconnect 路径 = <仓库绝对路径>/scripts/mock-openconnect.sh
+#   额外参数         = --scenario=success
+```
+
+可用场景（写在配置的「自定义 openconnect 额外参数」里）：
+
+| 场景 | 行为 | 用于验证 |
+| --- | --- | --- |
+| `--scenario=success` | 正常输出并连通 | 状态机进入「已连通」、日志着色 |
+| `--scenario=dtls` | DTLS 失败降级后仍连通 | DTLS 降级告警标签 |
+| `--scenario=authfail` | 401 + 退出码 2 | 认证失败弹窗、异常断开状态 |
+| `--scenario=certfail` | 证书校验失败 + 退出码 2 | 证书错误标签 |
+| `--scenario=timeout` | 停在握手，永不连通 | 60 秒握手超时提醒 |
+| `--scenario=hang` | 连通后忽略 SIGTERM | 「强制终止」按钮、6 秒后升级 SIGKILL |
+
+程序检测到可执行文件名含 `mock` 时会跳过提权校验并在日志中注明，生产环境的
+`openconnect` 不受影响。
+
+---
+
+### GitHub Actions 自动打包
+
+仓库已包含 `.github/workflows/release.yml`。Tauri 不支持交叉编译打包，因此
+CI 用矩阵在三个原生 runner 上分别构建：
+
+| Runner | 产物 |
+| --- | --- |
+| `macos-latest`（arm64） | `.dmg` + `.app` |
+| `windows-latest` | NSIS 安装包 `.exe` + 便携版 `zip` |
+| `ubuntu-22.04` | `.deb` |
+
+**触发方式**
+
+- 推送 tag：`git tag v1.0.0 && git push origin v1.0.0` → 构建并创建**草稿** release，产物附在 release 上；
+- 手动触发：仓库 Actions 页 → build → Run workflow → 产物在本次运行的 Artifacts 中下载（不创建 release）。
+
+**前置条件：Windows 运行时必须入库**
+
+`tauri.conf.json` 的 `bundle.resources` 会把 `src-tauri/resources/openconnect/`
+打进安装包的 `openconnect/` 子目录。CI 的 checkout 只能拿到仓库里已有的文件，
+所以必须先把以下文件提交进 git（`.gitignore` 已放行）：
+
+```
+src-tauri/resources/openconnect/openconnect.exe
+src-tauri/resources/openconnect/*.dll          # libssl / libcrypto / libp11-kit 等
+src-tauri/resources/openconnect/vpnc-script-win.js   # 必需，否则路由与 DNS 不会写入
+```
+
+若不提交，CI 仍能跑通，但打出的 Windows 包内 `openconnect/` 为空，程序启动后
+会提示"未找到 openconnect"。workflow 中已加检查步骤，缺失时输出 warning 而不中断构建。
+
+`wintun.dll` **不要**放进这个目录（`.gitignore` 已排除）。按设计它由外层安装脚本
+在安装阶段部署，详见 6.3 节。
+
+**macOS 签名与公证（可选）**
+
+workflow 已预留全部签名变量，**secret 为空时 Tauri 自动跳过签名**，无需改动 YAML。
+要启用签名，在仓库 Settings → Secrets 中配置：
+
+| Secret | 说明 |
+| --- | --- |
+| `APPLE_CERTIFICATE` | Developer ID Application 证书的 p12，`base64` 编码后的单行 |
+| `APPLE_CERTIFICATE_PASSWORD` | 导出 p12 时设置的密码 |
+| `APPLE_SIGNING_IDENTITY` | 如 `Developer ID Application: Your Name (TEAMID)` |
+| `APPLE_ID` | Apple 开发者账号邮箱（公证用） |
+| `APPLE_PASSWORD` | App 专用密码，非账号密码 |
+| `APPLE_TEAM_ID` | 10 位 Team ID |
+
+未配置签名时，用户首次打开 dmg 内的 app 会被 Gatekeeper 拦截，需右键 →「打开」，
+或执行：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Octauri.app"
+```
+
+**成本参考**
+
+public 仓库 Actions 分钟数不限；private 仓库 macOS runner 按 10 倍计费，
+本 workflow 一次完整运行约消耗 100 分钟以上额度（macOS 两轮各约占大头）。
+
+**首次推送提醒**
+
+- 确认 `src-tauri/resources/openconnect/` 下的二进制已 `git add`（体积约 10–20 MB）；
+- `Cargo.lock` 与 `package-lock.json` 必须入库，否则 CI 无法复现依赖版本；
+- `src-tauri/icons/` 已入库，CI 无需执行 `scripts/gen-icons.py`（该脚本依赖 python3）。
+
+---
+
+## 5. 权限说明（必读）
+
+`openconnect` 需要 root / 管理员权限才能创建虚拟网卡。
+
+| 平台 | 本程序的处理方式 |
+| --- | --- |
+| Windows | 通过内嵌清单 `requireAdministrator`，双击即弹 UAC。若便携版被以普通权限启动，界面会显示「未提权」红色告警并阻止连接。 |
+| macOS | **不会**自动提权。请从终端启动：`sudo "/Applications/Octauri.app/Contents/MacOS/octauri"`。未以 root 运行时界面顶部显示权限告警与可复制的启动命令。 |
+| Linux | 同上，`sudo ./octauri`。也可以为二进制配置 `pkexec` 或 sudoers 免密规则。 |
+
+程序**不会**自行修改 sudoers、不会静默提权、不会写入系统目录。
+
+---
+
+## 6. 内置运行时与前置部署
+
+程序按 `内置 → 全局设置 → 自动探测` 的优先级选择 openconnect。
+Windows 与 macOS 随包内置运行时，Linux 依赖发行版包管理器。
+
+### 6.1 macOS：已内置 openconnect
+
+`src-tauri/resources/openconnect/macos-arm64/` 是一份自包含的 openconnect 9.21：
+
+```
+macos-arm64/
+├── openconnect          主程序（94 KB）
+├── lib/*.dylib          13 个第三方库，install_name 已重写为 @executable_path
+├── vpnc-script          路由与 DNS 配置脚本
+└── ca-bundle.pem        184 个根证书（GnuTLS 默认信任库路径编译期写死，必须随包带）
+```
+
+三个必须知道的处理：
+
+1. **install_name 必须重写**。dyld 对绝对路径依赖不理会 `DYLD_LIBRARY_PATH`，
+   因此脚本用 `install_name_tool` 把 `/opt/homebrew/...` 全部改成
+   `@executable_path/lib/...`，否则换机器必然启动失败。
+2. **CA 证书必须随包带**。GnuTLS 把信任库路径编译进二进制
+   （`/opt/homebrew/etc/gnutls/cert.pem`），干净机器上不存在就会导致
+   `certificate verify failed`。程序检测到同目录有 `ca-bundle.pem` 时自动追加
+   `--cafile=`，用户仍可用额外参数覆盖。
+3. **vpnc-script 要绕开空格路径**。openconnect 以 shell 拼接命令执行该脚本，
+   而 `.app` 名字通常含空格（`Octauri.app`）。程序检测到路径含空格时
+   会先复制到 `$TMPDIR/octauri-scripts/` 再传入。
+
+重新生成（openconnect 升级后执行）：
+
+```bash
+brew install openconnect
+./scripts/bundle-openconnect-macos.sh
+```
+
+脚本会递归收集 `otool -L` 里的依赖、重写路径、ad-hoc 重签名，并校验产物中
+不再残留 `/opt/homebrew` 绝对路径（校验不通过直接失败，避免发出坏包）。
+
+**架构限制**：仅支持 Apple Silicon（arm64）。本项目是个人向工具，暂不覆盖 Intel Mac；
+在 x86_64 目标上编译时程序会自动回退到系统安装的 openconnect。
+
+**功能限制**：内置版不含 p11-kit 的 PKCS#11 trust 模块，智能卡 / USB Token
+认证不可用（`p11-kit-trust.dylib` 是运行时 `dlopen` 加载，不在链接依赖里）。
+用户名密码认证不受影响。
+
+### 6.2 Windows：内置 openconnect + wintun 驱动
+
+**本程序不包含 wintun 驱动的安装逻辑，只做检测与提示。** 驱动必须由外层安装
+程序或运维人员预先部署。
+
+需要准备的文件：
+
+1. `openconnect.exe` 及依赖 DLL（`libssl-3-x64.dll`、`libcrypto-3-x64.dll`、
+   `libp11-kit-0.dll` 等，视你的构建而定）
+2. `vpnc-script-win.js` —— **必需**。openconnect 靠它配置路由与 DNS。
+   缺失时 openconnect 会报 `vpnc-script not found`，隧道虽建立但流量不通。
+3. `wintun.dll` —— 从 <https://www.wintun.net/> 获取对应架构（amd64 / arm64）。
+
+### 6.3 放置位置
+
+```
+安装目录/
+├── Octauri.exe
+├── wintun.dll                 ← 与 exe 同目录（推荐）
+└── openconnect/
+    ├── openconnect.exe
+    ├── vpnc-script-win.js     ← 必需
+    └── *.dll
+```
+
+`src-tauri/resources/openconnect/` 中的内容会被整体打包到安装目录的
+`openconnect/` 子目录下，程序启动时优先使用该路径。
+
+`wintun.dll` 的检测顺序：`openconnect.exe` 同目录 → 程序 exe 同目录 →
+`%SystemRoot%\System32`。任一位置命中即视为就绪。
+
+### 6.4 两类交付形态
+
+**A. 便携免安装版**（适合已预装 wintun 的运维主机 / U 盘）
+
+```bash
+npx tauri build --no-bundle
+```
+
+将 `src-tauri/target/release/octauri.exe` 与 `src-tauri/resources/openconnect/`
+内容、`wintun.dll` 一起拷入同一目录即可运行。无需安装、不写注册表。
+
+**B. NSIS 安装包**（由外层脚本负责 wintun 部署）
+
+```bash
+npx tauri build --bundles nsis
+```
+
+Tauri 生成的 NSIS 安装包会将 `resources/openconnect/` 部署到安装目录。
+若要在安装阶段顺带部署 wintun，可使用 Tauri 的 NSIS hooks 机制：
+
+1. 将 `src-tauri/nsis/wintun-hook.nsh.example` 复制为 `src-tauri/nsis/wintun-hook.nsh`；
+2. 把 `wintun.dll` 放到 `src-tauri/nsis/payload/wintun.dll`；
+3. 在 `tauri.conf.json` 的 `bundle.windows.nsis` 中加入
+   `"installerHooks": "nsis/wintun-hook.nsh"`。
+
+该示例脚本仅做「复制 DLL + 校验文件存在」，不安装内核服务、不改动系统配置。
+是否启用由你决定，仓库默认不启用。
+
+---
+
+## 7. 配置与数据存放位置
+
+| 内容 | 路径 |
+| --- | --- |
+| 配置列表 | `{appDataDir}/profiles.json`（macOS `~/Library/Application Support/io.github.nbsod.octauri/`，Windows `%APPDATA%\io.github.nbsod.octauri\`，Linux `~/.config/io.github.nbsod.octauri/`） |
+| 全局设置 | 同目录 `prefs.json` |
+| 密码 | 系统钥匙串，服务名 `octauri`，账户 `profile:<配置id>` |
+| 日志 | 仅内存（后端 2000 条环形缓冲 + 前端可配上限），不落盘；需要留存请手动导出 |
+
+`profiles.json` 采用「写临时文件 + rename」的原子写入，文件权限在类 Unix 系统上
+设为 `0600`。解析失败时会备份为 `profiles.corrupt-<时间戳>.json` 而不是直接清空。
+
+导入配置时**不会**导入密码，且强制关闭 `rememberPassword`，避免凭据随文件扩散。
+
+---
+
+## 8. 排障对照表
+
+| 现象 | 原因 | 处理 |
+| --- | --- | --- |
+| 「未找到 openconnect 可执行文件」 | 未安装或不在探测路径 | 安装 openconnect，或在设置 / 配置中手动指定路径 |
+| 启动即报 `Permission denied` | 缺少 root / 管理员权限 | Windows 右键「以管理员身份运行」；macOS/Linux 用 `sudo` 启动 |
+| 连接成功但无法访问内网 | `vpnc-script` 缺失，路由未写入 | 部署 `vpnc-script-win.js`（Windows）或 `vpnc-script`（类 Unix），并确保其在 PATH 中 |
+| Windows 提示 wintun 未就绪 | 未部署 `wintun.dll` | 按第 6 节放置 DLL 后重新点「重新探测」 |
+| 日志出现 `DTLS ... failed` / 降级为 TLS | UDP 被防火墙拦截 | 属正常降级，连接仍可用但吞吐下降；可在额外参数加 `--no-dtls` 消除告警 |
+| 日志出现 `certificate verify failed` | 服务端证书不被信任（自签 / 中间证书缺失 / 时钟偏差） | 校时、补全 CA，或谨慎使用 `--servercert pin-sha256:...` |
+| 日志出现 `Login failed` / `401` | 账号密码错误或认证方式不匹配 | 核对凭据；证书模式勿勾选密码 |
+| 进程不退、端口占用 | openconnect 卡在 teardown | 点「强制终止」（SIGKILL / `taskkill /F /T`） |
+| macOS 关闭窗口后程序仍在 | 这是设计行为 | 托盘右键「退出」或 Cmd+Q 退出 |
+
+---
+
+## 9. 已知限制
+
+1. **不解析 openconnect 的交互式提示**。遇到需要二次输入（如 OTP、SMS 验证码）的
+   网关，当前版本无法完成交互，会表现为握手超时。可通过额外参数
+   `--token-mode=...` 或改用证书认证规避。
+2. **密码模式仅支持 `--passwd-on-stdin` 一次性投喂**，不处理多轮质询。
+3. **不提供流量统计、分应用分流、自动重连**。这些均属协议层/系统层能力，超出外壳定位。
+4. **单实例**：未做单实例锁，重复启动会得到多个托盘图标（连接互不干扰）。
+5. macOS / Linux 不捆绑 openconnect 二进制，依赖系统部署（这是有意的选择，
+   避免 LGPL 二进制分发与版本维护负担）。
+
+---
+
+## 10. 开源许可与合规
+
+### 10.1 本项目
+
+**Octauri** 以 **GNU 通用公共许可证第 3 版或更新版本（GPL-3.0-or-later）** 发布，
+Copyright © 2025 Octauri Contributors。全文见仓库根目录的 [`LICENSE`](./LICENSE)。
+
+选择 GPL 而非 MIT 的原因：本项目允许任何人使用与商业使用，但**不允许把衍生版本
+闭源分发**。若有人基于 Octauri 修改后闭源售卖，作者有权要求其开放源代码。
+
+需要清楚的边界：**GPL 允许商业使用**，它限制的是「闭源分发衍生作品」，不是「收费」。
+如果目标是完全禁止商用，GPL 做不到，需要改用非 OSI 开源许可（代价是无法标为开源项目）。
+
+### 10.2 内置的 OpenConnect
+
+`src-tauri/resources/openconnect/macos-arm64/` 随仓库分发一份 OpenConnect 9.21
+（macOS arm64 构建），其许可证为 **LGPL-2.1**：
+
+- Copyright © 2009-2025 OpenConnect Contributors
+- 许可证全文：<https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html>
+- 源码获取：<https://gitlab.com/openconnect/openconnect/-/releases>
+- 项目主页：<https://www.infradead.org/openconnect/>
+
+**兼容性说明**：LGPL-2.1 允许被 GPL-3.0 项目包含与再分发，二者不冲突。
+本项目未修改 OpenConnect 源码，仅以独立进程方式调用其可执行文件，
+不构成衍生作品——即使不采用 GPL，本项目也有权选择任意许可证。
+
+**分发义务**：二次分发本仓库或安装包时，须保留 `LICENSE`、
+`THIRD-PARTY-NOTICES.md`，并提供上表中的源码获取途径。
+
+### 10.3 商标
+
+**Octauri 的名称与图标不在 GPL 授权范围内**，项目保留全部权利。
+
+GPL 明确不授予商标权。这意味着：
+
+- 他人可以自由使用、修改、分发代码；
+- 但不得使用 "Octauri" 名称或本项目图标暗示官方背书、或以本项目名义发布衍生版；
+- 修改版请更换名称与图标。
+
+这是 GPL 之外唯一的额外限制，也是防止「拿代码改名去卖还声称是原版」的实际手段——
+代码许可证管不了品牌，商标才可以。
+
+### 10.4 第三方依赖
+
+本项目使用的 Rust 与前端依赖全部为宽松许可（MIT / Apache-2.0 为主），
+与 GPL-3.0 兼容。完整清单与主要组件声明见 [`THIRD-PARTY-NOTICES.md`](./THIRD-PARTY-NOTICES.md)。
+
+---
+
+## 11. 开发方式说明
+
+**本项目是 AI 辅助开发（vibe coding）的产物，这一点如实披露。**
+
+分工大致如下：
+
+| 环节 | 由谁完成 |
+| --- | --- |
+| 需求定义与硬性约束（纯套壳、禁止自研协议栈、依赖控制、平台适配要求） | 人类提出，并逐条校验实现是否越界 |
+| 技术选型与架构决策（子进程模型、状态机、许可证选择、内置运行时方案） | 人类拍板，AI 提供方案与取舍分析 |
+| 代码编写、重构、文档撰写 | AI 生成 |
+| 代码审阅、逐轮修改方向、界面验收 | 人类 |
+| 编译、类型检查、单元测试、界面截图核验 | AI 执行，人类确认结果 |
+| 真实环境联调 | 尚未完成，见第 9 节「已知限制」 |
+
+### 这意味着什么
+
+**不要默认它已经过充分检验。** 当前的验证强度是：`cargo check` / `cargo test`（2 个单元测试）/
+`vue-tsc` / `vite build` 全部通过，界面在深色与浅色主题下逐屏核验，
+macOS 内置运行时经 `otool` 校验无外部路径依赖。**但没有在真实 VPN 网关上跑过一次完整连接**。
+
+**代码可能包含不自然的写法。** AI 生成代码常见的模式是「逻辑正确但结构冗余」，
+本项目已按极简原则做过一轮收敛（Rust 侧 8 个源文件、前端无 UI 库与状态管理库），
+但仍有改进空间。
+
+**若用于生产环境，请自行审查**，尤其是进程管理（`runner.rs`）与凭据处理（`store.rs`）两处。
+
+### 关于版权
+
+GPL-3.0 的效力以版权存在为前提。本项目的人类贡献体现在：需求与约束的定义、
+架构与许可决策、每一轮改动的审阅与取舍、验证标准的确立。这些构成对作品整体的
+创造性控制。但不宜声称「每一行代码均由人类独立编写」。
+
+如果你要基于本项目做商业分发或法律主张，建议先做独立的法律评估。
+
+### 这是缺陷吗
+
+不是。AI 辅助开发把实现周期从数周压缩到数小时，
+代价是必须自己承担验证责任。本项目把「已知未验证项」明确写在
+[第 9 节](#9-已知限制)，而不是假装它已经全部就绪。

@@ -1,0 +1,13 @@
+{
+  "//": "可选配置：单独检查 vite.config.ts 时使用（npx tsc -p tsconfig.node.json）。主 tsconfig.json 已直接包含该文件。",
+  "compilerOptions": {
+    "skipLibCheck": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "allowSyntheticDefaultImports": true,
+    "target": "ES2020",
+    "strict": true,
+    "noEmit": true
+  },
+  "include": ["vite.config.ts"]
+}

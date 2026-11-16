@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "主窗口最小权限集：仅核心能力与文件选择对话框。窗口显示/隐藏、进程控制均由 Rust 侧完成，无需前端额外权限。",
+  "windows": ["main"],
+  "permissions": ["core:default", "dialog:default"]
+}

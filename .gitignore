@@ -1,0 +1,38 @@
+# ---- Node / 前端 ----
+node_modules/
+dist/
+dist-ssr/
+*.local
+.vite/
+
+# ---- Rust / Tauri ----
+src-tauri/target/
+src-tauri/gen/
+
+# ---- 图标生成中间产物（保留最终图标） ----
+src-tauri/icons/icon-512.png
+src-tauri/icons/64x64.png
+
+# ---- Windows 捆绑运行时 ----
+# openconnect.exe 及依赖 DLL 随仓库分发（CI 构建需要），不排除。
+# 仅排除误入的临时产物；LGPL 分发义务见 README 第 10 节。
+src-tauri/resources/openconnect/*.tmp
+src-tauri/resources/openconnect/*.log
+src-tauri/resources/openconnect/*.pdb
+src-tauri/resources/openconnect/*.dll.bak
+
+# wintun.dll 不入库：按需求由外层安装脚本部署，程序只做检测
+src-tauri/resources/**/wintun.dll
+
+# ---- NSIS 载荷 ----
+src-tauri/nsis/payload/
+
+# ---- 系统 ----
+.DS_Store
+Thumbs.db
+
+# ---- 编辑器 ----
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
