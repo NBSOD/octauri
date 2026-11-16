@@ -1,8 +1,14 @@
-此目录用于存放 Windows 平台捆绑的 openconnect 运行时。
-This directory holds the bundled openconnect runtime for Windows.
+此目录存放随包分发的 openconnect 运行时。
+This directory holds the bundled openconnect runtime.
 
-需要放置的文件（需自行获取，本仓库不分发二进制）：
-Required files (fetch them yourself; this repo does not ship binaries):
+=== 本目录已内置 / Already bundled ===
+
+  wintun.dll           Windows 虚拟网卡驱动库（官方签名版，amd64，v0.14.1）
+                       来源：https://www.wintun.net/  请勿改名或修改
+  wintun-license.txt   上面的 DLL 附带的 Prebuilt Binaries License
+  wintun-README.md     Wintun 官方集成说明
+
+=== 仍需自行放置 / You still need to add ===
 
   openconnect.exe      openconnect 主程序（Windows 构建）
   libssl-3-x64.dll     OpenSSL
@@ -11,19 +17,22 @@ Required files (fetch them yourself; this repo does not ship binaries):
   libgnutls-30.dll     GnuTLS（若使用 GnuTLS 构建）
   libxml2-2.dll        libxml2（若构建依赖）
   vpnc-script-win.js   Windows 下的 vpnc-script（路由/DNS 配置脚本，必需）
-  wintun.dll           *不要放在这里* —— 由外层安装脚本部署到程序目录或 System32
 
 要点 / Notes:
-1. 打包后这些文件会位于安装目录的 openconnect/ 子目录中，程序启动时
-   会优先使用该目录下的 openconnect.exe。
-2. vpnc-script-win.js 也需在 PATH 或 openconnect 同目录下，否则 openconnect
-   会报 "vpnc-script not found"，无法写入路由与 DNS。
-3. macOS 的内置运行时不在本目录，而在同级的 macos-arm64/（自包含：二进制 +
-   dylib + vpnc-script + ca-bundle.pem）。Linux 不内置，调用系统已安装的
-   openconnect。
-   （macOS: Homebrew 路径优先；Linux: 系统 PATH）。
-4. 本程序不安装 wintun 驱动，仅做检测与提示。驱动部署由外层 NSIS 脚本完成。
+
+1. 打包后这些文件会位于安装目录的 openconnect/ 子目录中，程序启动时会优先
+   使用该目录下的 openconnect.exe，用户无需安装 openconnect。
+2. vpnc-script-win.js 必须在 openconnect.exe 同目录，否则 openconnect 会报
+   "vpnc-script not found"，隧道建立后无法写入路由与 DNS。
+3. wintun.dll 必须与 openconnect.exe 同目录——这是 Wintun 官方要求的
+   side-by-side 部署方式，驱动由 DLL 在首次使用时自动完成注册，
+   不需要单独的驱动安装程序，也不需要用户手动操作。
+4. 本目录的 wintun.dll 是 amd64（x64）版本。若需支持 Windows on ARM，
+   把 wintun.net 压缩包内的 bin/arm64/wintun.dll 替换过来即可（文件名不变）。
+5. macOS 的内置运行时在 macos-arm64/（自包含：二进制 + dylib + vpnc-script +
+   ca-bundle.pem）。Linux 不内置，调用系统已安装的 openconnect。
 
 推荐来源 / Where to get:
-  https://gitlab.com/openconnect/openconnect/-/releases
-  （Windows 构建可使用 MSYS2 或官方提供的安装包解压取得）
+  openconnect: https://gitlab.com/openconnect/openconnect/-/releases
+               （Windows 构建可用 MSYS2 或官方安装包解压取得）
+  wintun:      https://www.wintun.net/  （必须用官方签名版）

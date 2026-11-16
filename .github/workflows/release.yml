@@ -68,10 +68,18 @@ jobs:
       - name: 安装前端依赖
         run: npm ci
 
-      - name: 检查 Windows 捆绑的 openconnect 运行时
+      - name: 检查 Windows 捆绑的运行时
         if: matrix.platform == 'windows-latest'
         shell: bash
         run: |
+          # wintun 随仓库分发，缺失属于致命错误
+          test -f src-tauri/resources/openconnect/wintun.dll \
+            || { echo "::error::缺少 wintun.dll"; exit 1; }
+          test -f src-tauri/resources/openconnect/wintun-license.txt \
+            || { echo "::error::缺少 wintun-license.txt（分发义务要求保留）"; exit 1; }
+          echo "✅ wintun.dll $(stat -c%s src-tauri/resources/openconnect/wintun.dll) bytes"
+
+          # openconnect.exe 需用户自备，缺失仅警告
           if [ -f "src-tauri/resources/openconnect/openconnect.exe" ]; then
             echo "✅ 已找到内置 openconnect.exe"
             ls -la src-tauri/resources/openconnect/

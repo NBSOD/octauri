@@ -32,7 +32,30 @@ Last updated: 2026-11-16
 **CA 证书包**：`ca-bundle.pem` 来自 Mozilla CA Certificate Store
 （MPL-2.0），仅作为数据文件分发。
 
-### 1.2 vpnc-script
+### 1.2 Wintun 0.14.1（Windows 虚拟网卡驱动库）
+
+| 项 | 内容 |
+| --- | --- |
+| 位置 | `src-tauri/resources/openconnect/wintun.dll`（amd64，418 KB） |
+| 许可证 | **Wintun Prebuilt Binaries License**（`wintun-license.txt`） |
+| 版权 | Copyright © 2018-2021 WireGuard LLC. All Rights Reserved. |
+| 来源 | <https://www.wintun.net/>，SHA256 与官网公布值一致 |
+| 版本 | 0.14.1（官网 SHA256: `07c25618...4ef51`） |
+
+**为什么可以随本项目分发**：该许可证第 3.d 条禁止在未获书面同意时再分发，
+但明确豁免「软件与通过 Permitted API 使用它的其他软件一同分发」的情形。
+OpenConnect 正是通过 `wintun.h` 的 API 加载 `wintun.dll`，因此随包分发合法。
+
+**必须遵守的四条**：
+
+1. 只能使用 wintun.net 下载的官方签名 DLL，不得自行编译；
+2. 保持文件名 `wintun.dll`，不得改名（官方警告改名会与已部署版本冲突）；
+3. 不得反编译、修改，或移除其中的版权声明；
+4. 不得使用 WireGuard / Wintun 的名义为本项目背书。
+
+本文件即为第 3 条所要求的版权声明保留形式之一。
+
+### 1.3 vpnc-script
 
 | 项 | 内容 |
 | --- | --- |
@@ -86,5 +109,6 @@ MPL-2.0 组件（文件级 copyleft）以未修改的依赖形式使用，不触
 - [ ] 附带仓库根目录的 `LICENSE`（GPL-3.0 全文）
 - [ ] 附带本文件 `THIRD-PARTY-NOTICES.md`
 - [ ] 保留内置 OpenConnect 的 LGPL-2.1 声明与源码获取地址
+- [ ] 保留 wintun.dll 及其 `wintun-license.txt`，不得改名或修改该 DLL
 - [ ] 若修改了 Octauri 源码并对外分发，以 GPL-3.0-or-later 开放源代码
 - [ ] 不使用 "Octauri" 名称或图标暗示官方背书（见 README 10.3）

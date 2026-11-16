@@ -323,64 +323,73 @@ brew install openconnect
 认证不可用（`p11-kit-trust.dylib` 是运行时 `dlopen` 加载，不在链接依赖里）。
 用户名密码认证不受影响。
 
-### 6.2 Windows：内置 openconnect + wintun 驱动
+### 6.2 Windows：wintun 已内置，只需补 openconnect
 
-**本程序不包含 wintun 驱动的安装逻辑，只做检测与提示。** 驱动必须由外层安装
-程序或运维人员预先部署。
+`src-tauri/resources/openconnect/wintun.dll` 已经随仓库分发
+（**Wintun 0.14.1 官方签名版，amd64**，SHA256 与 wintun.net 公布值一致）。
 
-需要准备的文件：
+**驱动不需要单独安装。** Wintun 的设计是把签名驱动内嵌在 DLL 里，首次被
+openconnect 调用时通过 SetupAPI 自动完成注册——用户不需要下载驱动、不需要
+运行安装程序、不需要手动配置，只会在第一次连接时看到一次 UAC 提权弹窗。
+
+你需要自行补两个文件到同一目录：
 
 1. `openconnect.exe` 及依赖 DLL（`libssl-3-x64.dll`、`libcrypto-3-x64.dll`、
    `libp11-kit-0.dll` 等，视你的构建而定）
 2. `vpnc-script-win.js` —— **必需**。openconnect 靠它配置路由与 DNS。
    缺失时 openconnect 会报 `vpnc-script not found`，隧道虽建立但流量不通。
-3. `wintun.dll` —— 从 <https://www.wintun.net/> 获取对应架构（amd64 / arm64）。
+
+`wintun.dll` 无需处理。若要支持 Windows on ARM，用 wintun.net 压缩包里的
+`bin/arm64/wintun.dll` 替换同名文件即可。
+
+**合规提示**（Wintun Prebuilt Binaries License）：必须使用 wintun.net 的官方
+签名 DLL、保持原文件名 `wintun.dll`、不得反编译或修改、不得移除版权声明、
+不得以 WireGuard / Wintun 名义为本项目背书。该许可证明确允许随通过其 API
+使用它的软件一起分发，因此与 GPL-3.0 的 Octauri 分发不冲突。
 
 ### 6.3 放置位置
 
 ```
 安装目录/
 ├── Octauri.exe
-├── wintun.dll                 ← 与 exe 同目录（推荐）
 └── openconnect/
     ├── openconnect.exe
     ├── vpnc-script-win.js     ← 必需
+    ├── wintun.dll             ← 已内置，随包分发
+    ├── wintun-license.txt
+    ├── wintun-README.md
     └── *.dll
 ```
 
 `src-tauri/resources/openconnect/` 中的内容会被整体打包到安装目录的
 `openconnect/` 子目录下，程序启动时优先使用该路径。
 
-`wintun.dll` 的检测顺序：`openconnect.exe` 同目录 → 程序 exe 同目录 →
-`%SystemRoot%\System32`。任一位置命中即视为就绪。
+`wintun.dll` 必须与 `openconnect.exe` 同目录——这是 Wintun 要求的 side-by-side
+部署方式。程序的检测顺序为：`openconnect.exe` 同目录 → 主程序 exe 同目录 →
+`%SystemRoot%\System32`，任一位置命中即视为就绪。
 
 ### 6.4 两类交付形态
 
-**A. 便携免安装版**（适合已预装 wintun 的运维主机 / U 盘）
+**A. 便携免安装版**（U 盘直接运行）
 
 ```bash
 npx tauri build --no-bundle
 ```
 
 将 `src-tauri/target/release/octauri.exe` 与 `src-tauri/resources/openconnect/`
-内容、`wintun.dll` 一起拷入同一目录即可运行。无需安装、不写注册表。
+整个目录拷到同一位置即可，其中已含 wintun.dll，无需额外部署。不写注册表。
 
-**B. NSIS 安装包**（由外层脚本负责 wintun 部署）
+**B. NSIS 安装包**
 
 ```bash
 npx tauri build --bundles nsis
 ```
 
-Tauri 生成的 NSIS 安装包会将 `resources/openconnect/` 部署到安装目录。
-若要在安装阶段顺带部署 wintun，可使用 Tauri 的 NSIS hooks 机制：
+安装包会把 `resources/openconnect/`（含 wintun.dll）部署到安装目录，
+装完即可连接，无需任何后续手动步骤。
 
-1. 将 `src-tauri/nsis/wintun-hook.nsh.example` 复制为 `src-tauri/nsis/wintun-hook.nsh`；
-2. 把 `wintun.dll` 放到 `src-tauri/nsis/payload/wintun.dll`；
-3. 在 `tauri.conf.json` 的 `bundle.windows.nsis` 中加入
-   `"installerHooks": "nsis/wintun-hook.nsh"`。
-
-该示例脚本仅做「复制 DLL + 校验文件存在」，不安装内核服务、不改动系统配置。
-是否启用由你决定，仓库默认不启用。
+> `src-tauri/nsis/wintun-hook.nsh.example` 是早期设计留下的自定义 hook 示例，
+> 在 wintun 已随包内置后**不再需要**。保留它仅供你添加其他安装期自定义步骤时参考。
 
 ---
 

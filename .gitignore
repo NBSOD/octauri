@@ -21,8 +21,8 @@ src-tauri/resources/openconnect/*.log
 src-tauri/resources/openconnect/*.pdb
 src-tauri/resources/openconnect/*.dll.bak
 
-# wintun.dll 不入库：按需求由外层安装脚本部署，程序只做检测
-src-tauri/resources/**/wintun.dll
+# wintun.dll 随包内置（官方签名版，amd64），与 openconnect.exe 同目录
+# 它必须保持原名，且只能用 wintun.net 下载的版本 —— 见 THIRD-PARTY-NOTICES.md
 
 # ---- NSIS 载荷 ----
 src-tauri/nsis/payload/
