@@ -33,6 +33,10 @@ export interface StateSnapshot {
   pid: number | null;
   since: number;
   message: string;
+  /** 隧道内分配到的 IP，已连通后才有值 */
+  tunnelIp: string | null;
+  /** 本次连接的网关地址 */
+  gateway: string | null;
 }
 
 export type LogLevel = "info" | "warn" | "error" | "success";

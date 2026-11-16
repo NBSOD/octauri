@@ -1,29 +1,17 @@
 <script setup lang="ts">
 import { computed } from "vue";
 import Icon from "./Icon.vue";
-import { connStateLabel, refreshEnv, setTheme, state } from "../store";
+import { setTheme, state } from "../store";
 
 const emit = defineEmits<{
   (e: "open-settings"): void;
   (e: "open-about"): void;
 }>();
 
-const statusText = computed(() => connStateLabel(state.conn.state));
-const pid = computed(() => state.conn.pid);
-
-const envOk = computed(() => {
-  const env = state.env;
-  if (!env) return false;
-  return !!env.openconnectPath && env.elevated && env.warnings.length === 0;
-});
-
-const envTitle = computed(() => {
-  const env = state.env;
-  if (!env) return "环境未探测";
-  if (!env.openconnectPath) return "未找到 openconnect";
-  if (!env.elevated) return "缺少管理员权限";
-  return env.openconnectVersion ?? env.openconnectPath;
-});
+/** 诊断页角标：环境有阻断问题，或连接异常断开 */
+const diagAlert = computed(
+  () => (state.env?.warnings.length ?? 0) > 0 || state.conn.state === "error",
+);
 
 function toggleTheme() {
   setTheme(state.prefs.theme === "dark" ? "light" : "dark");
@@ -37,23 +25,18 @@ function toggleTheme() {
       <span>Octauri</span>
     </div>
 
-    <div class="pill" :class="state.conn.state">
-      <span class="dot" />
-      <span>{{ statusText }}</span>
-      <span v-if="pid" class="mono faint">pid {{ pid }}</span>
-    </div>
+    <nav class="tabs">
+      <button class="tab" :class="{ active: state.page === 'home' }" @click="state.page = 'home'">
+        连接
+        <span v-if="state.page !== 'home'" class="tab-dot" :class="state.conn.state" />
+      </button>
+      <button class="tab" :class="{ active: state.page === 'diag' }" @click="state.page = 'diag'">
+        诊断
+        <span v-if="diagAlert" class="tab-badge">!</span>
+      </button>
+    </nav>
 
     <div class="spacer" />
-
-    <button
-      class="btn btn-ghost"
-      :class="{ 'env-bad': state.env && !envOk }"
-      :title="envTitle"
-      @click="refreshEnv()"
-    >
-      <Icon name="refresh" :size="14" />
-      <span class="mono env-text">{{ envTitle }}</span>
-    </button>
 
     <button
       class="btn btn-icon btn-ghost"
@@ -74,74 +57,66 @@ function toggleTheme() {
 </template>
 
 <style scoped>
-.pill {
+.tabs {
+  display: flex;
+  gap: 2px;
+  margin-left: 18px;
+  padding: 2px;
+  border-radius: var(--radius);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+}
+
+.tab {
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  height: 24px;
-  padding: 0 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  font-size: 12px;
+  height: 26px;
+  padding: 0 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
   color: var(--text-dim);
+  cursor: pointer;
+  font-size: 12.5px;
+}
+.tab:hover {
+  color: var(--text);
+}
+.tab.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
 }
 
-.pill .dot {
-  width: 7px;
-  height: 7px;
+/* 在诊断页时，「连接」页签上的小圆点提示当前连接状态 */
+.tab-dot {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--text-faint);
 }
-
-.pill.handshaking {
-  border-color: var(--warn);
-  color: var(--warn);
-  background: var(--warn-soft);
-}
-
-.pill.handshaking .dot {
-  background: var(--warn);
-}
-
-.pill.connected {
-  border-color: var(--success);
-  color: var(--success);
-  background: var(--success-soft);
-}
-
-.pill.connected .dot {
+.tab-dot.connected {
   background: var(--success);
 }
-
-.pill.error {
-  border-color: var(--error);
-  color: var(--error);
-  background: var(--error-soft);
+.tab-dot.handshaking,
+.tab-dot.disconnecting {
+  background: var(--warn);
 }
-
-.pill.error .dot {
+.tab-dot.error {
   background: var(--error);
 }
 
-.pill.disconnecting {
-  border-color: var(--warn);
-  color: var(--warn);
-  background: var(--warn-soft);
-}
-
-.pill.disconnecting .dot {
-  background: var(--warn);
-}
-
-.env-text {
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11.5px;
-}
-
-.env-bad {
-  color: var(--warn);
+.tab-badge {
+  min-width: 14px;
+  height: 14px;
+  padding: 0 4px;
+  border-radius: 7px;
+  background: var(--error);
+  color: #fff;
+  font-size: 10px;
+  line-height: 14px;
+  font-weight: 600;
 }
 </style>

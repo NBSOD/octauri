@@ -105,6 +105,10 @@ pub struct StateSnapshot {
     /// 状态进入时间（毫秒时间戳）
     pub since: i64,
     pub message: String,
+    /// 隧道内分配到的 IP，取自 "Connected as x.x.x.x"
+    pub tunnel_ip: Option<String>,
+    /// 本次连接的网关地址（用于首页展示）
+    pub gateway: Option<String>,
 }
 
 impl Default for StateSnapshot {
@@ -116,6 +120,8 @@ impl Default for StateSnapshot {
             pid: None,
             since: now_ms(),
             message: String::new(),
+            tunnel_ip: None,
+            gateway: None,
         }
     }
 }

@@ -55,7 +55,7 @@ octauri/
 │   └── mock-openconnect.sh          假 openconnect，无网关时本地联调
 ├── src/                         Vue 3 前端
 │   ├── main.ts
-│   ├── App.vue                  三栏布局装配 / 日志栏拖拽 / 对话框编排
+│   ├── App.vue                  页面切换（连接 / 诊断）/ 对话框编排
 │   ├── api.ts                   后端命令薄封装
 │   ├── store.ts                 全局状态与业务动作（无 Pinia）
 │   ├── types.ts                 与 Rust 侧对齐的类型定义
@@ -63,8 +63,9 @@ octauri/
 │   └── components/
 │       ├── TopBar.vue           品牌 / 状态胶囊 / 主题 / 设置 / 关于
 │       ├── ProfileList.vue      左栏：配置列表 + 导入导出
-│       ├── ControlPanel.vue     中栏：状态卡 / 环境告警 / 配置详情
-│       ├── LogPanel.vue         右栏：日志流 / 检索 / 复制 / 导出
+│       ├── HomePanel.vue        首页：网关 / 状态 / 隧道 IP / 时长 / 失败摘要
+│       ├── DiagPage.vue         诊断页：运行环境 + 完整日志
+│       ├── LogPanel.vue         日志流 / 检索 / 复制 / 导出（嵌入诊断页）
 │       ├── ProfileDialog.vue    配置编辑表单
 │       ├── SettingsDialog.vue   主题 / 全局 openconnect 路径 / 日志上限
 │       ├── AboutDialog.vue      LGPL 版权声明

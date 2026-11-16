@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { onBeforeUnmount, onMounted, ref, watch } from "vue";
 import TopBar from "./components/TopBar.vue";
 import ProfileList from "./components/ProfileList.vue";
-import ControlPanel from "./components/ControlPanel.vue";
-import LogPanel from "./components/LogPanel.vue";
+import HomePanel from "./components/HomePanel.vue";
+import DiagPage from "./components/DiagPage.vue";
 import ProfileDialog from "./components/ProfileDialog.vue";
 import SettingsDialog from "./components/SettingsDialog.vue";
 import AboutDialog from "./components/AboutDialog.vue";
@@ -21,33 +21,6 @@ const settingsOpen = ref(false);
 const aboutOpen = ref(false);
 const passwordOpen = ref(false);
 const passwordProfile = ref<Profile | null>(null);
-
-/** 日志面板宽度，支持拖拽调整并记忆 */
-const LOG_MIN = 300;
-const logWidth = ref(Number(localStorage.getItem("oc.logWidth")) || 440);
-const dragging = ref(false);
-
-const logStyle = computed(() => ({ width: `${logWidth.value}px` }));
-
-function startDrag(e: MouseEvent) {
-  dragging.value = true;
-  const startX = e.clientX;
-  const startW = logWidth.value;
-
-  const onMove = (ev: MouseEvent) => {
-    const next = startW - (ev.clientX - startX);
-    const max = Math.round(window.innerWidth * 0.7);
-    logWidth.value = Math.min(max, Math.max(LOG_MIN, next));
-  };
-  const onUp = () => {
-    dragging.value = false;
-    localStorage.setItem("oc.logWidth", String(logWidth.value));
-    window.removeEventListener("mousemove", onMove);
-    window.removeEventListener("mouseup", onUp);
-  };
-  window.addEventListener("mousemove", onMove);
-  window.addEventListener("mouseup", onUp);
-}
 
 function openNew() {
   editing.value = null;
@@ -112,17 +85,18 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="app" :class="{ dragging }">
+  <div class="app">
     <TopBar
       @open-settings="settingsOpen = true"
       @open-about="aboutOpen = true"
     />
 
     <div class="main">
-      <ProfileList @new="openNew" @edit="openEdit" />
-      <ControlPanel />
-      <div class="splitter" :class="{ dragging }" @mousedown.prevent="startDrag" />
-      <LogPanel :style="logStyle" />
+      <template v-if="state.page === 'home'">
+        <ProfileList @new="openNew" @edit="openEdit" />
+        <HomePanel />
+      </template>
+      <DiagPage v-else />
     </div>
 
     <ProfileDialog

@@ -113,6 +113,9 @@ impl Runner {
             if s.state == state.as_str() && s.message == message && s.pid == pid {
                 return;
             }
+            if matches!(state, ConnState::Idle | ConnState::Error) {
+                s.tunnel_ip = None;
+            }
             s.state = state.as_str().to_string();
             s.message = message.to_string();
             s.since = now_ms();
@@ -130,6 +133,9 @@ impl Runner {
         let lower = text.to_lowercase();
         let current = self.lock_state().state.clone();
         if lower.contains("connected as") {
+            if let Some(ip) = parse_tunnel_ip(text) {
+                self.lock_state().tunnel_ip = Some(ip);
+            }
             if current != "connected" {
                 self.transition(app, ConnState::Connected, "隧道已建立");
             }
@@ -324,6 +330,8 @@ impl Runner {
             let mut s = self.lock_state();
             s.profile_id = Some(profile.id.clone());
             s.profile_name = Some(profile.name.clone());
+            s.gateway = Some(profile.gateway.clone());
+            s.tunnel_ip = None;
         }
         self.transition(app, ConnState::Handshaking, "正在启动 openconnect…");
 
@@ -486,6 +494,17 @@ fn pump<R: Read + Send + 'static>(
             runner.detect_cert_prompt(&app, boot, &text);
         }
     });
+}
+
+/// 从 "Connected as 10.255.225.16, using SSL, ..." 中提取 IP。
+fn parse_tunnel_ip(text: &str) -> Option<String> {
+    let lower = text.to_lowercase();
+    let idx = lower.find("connected as ")? + "connected as ".len();
+    let ip: String = text[idx..]
+        .chars()
+        .take_while(|c| c.is_ascii_hexdigit() || *c == '.' || *c == ':')
+        .collect();
+    (!ip.is_empty()).then_some(ip)
 }
 
 /// 故障关键词分类，供前端着色与排障过滤。
@@ -715,6 +734,16 @@ mod tests {
 
     /// 中文输出不应被误判为成功——这正是本次缺陷的成因，
     /// 修复方式是在子进程层面强制 LC_ALL=C，而不是让分类器去适配多语言。
+    #[test]
+    fn parses_tunnel_ip() {
+        use super::parse_tunnel_ip;
+        assert_eq!(
+            parse_tunnel_ip("Connected as 10.255.225.16, using SSL, with DTLS disabled").as_deref(),
+            Some("10.255.225.16")
+        );
+        assert_eq!(parse_tunnel_ip("CSTP connected. DPD 30"), None);
+    }
+
     #[test]
     fn localized_output_is_not_recognized() {
         assert_ne!(classify("已配置为 10.255.225.16，使用 SSL 已连接").0, "success");

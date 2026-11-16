@@ -41,7 +41,11 @@ export const state = reactive({
     pid: null,
     since: 0,
     message: "",
+    tunnelIp: null,
+    gateway: null,
   } as StateSnapshot,
+  /** 当前页面：home = 连接，diag = 诊断（日志 + 环境） */
+  page: "home" as "home" | "diag",
   logs: [] as LogLine[],
   env: null as EnvReport | null,
   info: null as AppInfo | null,
