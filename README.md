@@ -288,6 +288,16 @@ macOS 提权后进程以 root 运行，但配置文件仍然写到**真实登录
 `~/Library/Application Support/`（通过 `stat -f %Su /dev/console` 定位），
 不会落到 `/var/root` 那种用户看不到的地方。
 
+### 退出行为
+
+退出 Octauri（托盘「退出」、Cmd+Q、菜单「退出 Octauri」，以及注销/关机时系统发来的
+SIGTERM / SIGINT / SIGHUP）都会**先结束 openconnect 子进程**：发 SIGTERM 让它调用
+vpnc-script 还原路由与 DNS，1.2 秒内未退出再 SIGKILL，然后进程结束。
+
+不这么做的话，openconnect 会以 root 孤儿进程残留，隧道与路由都还在，只能
+`sudo kill -9` 清理。清理完成后程序直接结束进程——macOS 上等待子进程会占用主线程，
+事件循环的自然收尾可能因此卡住，表现为端口已释放但 GUI 进程仍在。
+
 同理，**剪贴板按用户会话隔离**：root 进程直接写剪贴板，登录用户读不到。
 因此复制由后端完成——以 root 运行时通过 `launchctl asuser <登录用户 uid>`
 切换到登录会话执行 `pbcopy`（并显式指定 `LANG=en_US.UTF-8`，提权后环境变量
@@ -457,7 +467,8 @@ npx tauri build --bundles nsis
    - macOS：检测在弹密码框之前，已运行时再次双击**不会**再弹密码框
    - Windows：`requireAdministrator` 清单使 UAC 弹窗先于任何代码执行，
      因此重复双击仍会弹一次 UAC，通过后唤起已有窗口并退出，不会出现两个实例
-   - 若该端口被其他程序占用，程序照常启动，只是本次运行不启用单实例保护
+   - 若该端口被其他程序占用，程序照常启动，只是本次运行不启用单实例保护；
+     可用环境变量 `OCTAURI_PORT` 指定其他端口
 5. **Linux 不捆绑 openconnect**，依赖发行版包管理器安装。Windows 与 macOS（arm64）
    已内置，见第 6 节。
 

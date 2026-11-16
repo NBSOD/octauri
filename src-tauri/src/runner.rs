@@ -427,7 +427,7 @@ impl Runner {
         Ok(())
     }
 
-    /// 程序退出前同步清理子进程（阻塞，最多约 3 秒）。
+    /// 程序退出前同步清理子进程（阻塞，最多约 1.5 秒）。
     ///
     /// openconnect 是独立进程，GUI 退出时不会随之结束：它会变成孤儿进程，
     /// 隧道、路由、DNS 全部保留，而且以 root 运行，用户只能 sudo kill 清理。
@@ -439,8 +439,10 @@ impl Runner {
         };
         self.user_stop.store(true, Ordering::SeqCst);
         let _ = terminate(pid, false);
-        // 等待回收线程把 pid 清零（即子进程已退出）
-        for _ in 0..30 {
+        // 等待回收线程把 pid 清零（即子进程已退出）。
+        // 上限 1.2 秒：实测 openconnect 收到 SIGTERM 后约 90ms 内退出（含 vpnc-script
+        // 还原路由），等太久会拖慢退出体感。
+        for _ in 0..12 {
             if self.running_pid() != Some(pid) {
                 return;
             }

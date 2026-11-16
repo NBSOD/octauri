@@ -256,7 +256,7 @@ fn setup_window(app: &tauri::App) {
 pub fn run() {
     // 1) 单实例：已有实例时唤起其窗口后直接退出。
     //    放在提权之前，避免已运行时再次双击还弹一次密码框。
-    if single::notify_existing(single::PORT) {
+    if single::notify_existing(single::port()) {
         std::process::exit(0);
     }
 
@@ -267,11 +267,11 @@ pub fn run() {
     }
 
     // 3) 占用单实例端口。被其他程序占用时仍可启动，只是没有单实例保护
-    let mut instance_listener = single::bind(single::PORT);
+    let mut instance_listener = single::bind(single::port());
     if instance_listener.is_none() {
         eprintln!(
             "[octauri] 单实例端口 127.0.0.1:{} 被占用，本次运行不启用单实例保护",
-            single::PORT
+            single::port()
         );
     }
 
@@ -297,6 +297,45 @@ pub fn run() {
             setup_window(app);
             #[cfg(unix)]
             signals::install(app.handle().clone());
+            // 自测钩子（仅 debug 构建）：用指定可执行文件起一个连接，
+            // 用于验证「连接中退出」时子进程是否被清理
+            #[cfg(debug_assertions)]
+            if let Ok(bin) = std::env::var("OCTAURI_SELFTEST_SPAWN") {
+                if let Some(state) = app.try_state::<AppState>() {
+                    let profile = crate::model::Profile {
+                        id: "selftest".into(),
+                        name: "selftest".into(),
+                        gateway: "selftest.invalid".into(),
+                        username: "tester".into(),
+                        auth_method: crate::model::AuthMethod::Password,
+                        protocol: String::new(),
+                        certificate_path: String::new(),
+                        key_path: String::new(),
+                        extra_args: "--scenario=hang".into(),
+                        openconnect_path: bin.clone(),
+                        servercert: String::new(),
+                        created_at: 0,
+                        updated_at: 0,
+                    };
+                    match state.runner.start(app.handle(), &profile, std::path::Path::new(&bin), Some("x".into())) {
+                        Ok(pid) => eprintln!("[octauri] self-test: spawned child pid={pid}"),
+                        Err(e) => eprintln!("[octauri] self-test: spawn failed: {e}"),
+                    }
+                }
+            }
+            // 自测钩子（仅 debug 构建）：N 毫秒后走 app.exit(0)，用于验证退出路径
+            #[cfg(debug_assertions)]
+            if let Some(ms) = std::env::var("OCTAURI_EXIT_AFTER_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+            {
+                let h = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(ms));
+                    eprintln!("[octauri] self-test: app.exit(0) at {ms}ms");
+                    h.exit(0);
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -328,7 +367,14 @@ pub fn run() {
             if let Some(state) = app_handle.try_state::<AppState>() {
                 state.runner.shutdown();
             }
-            return;
+            // 清理完成后直接结束进程。
+            //
+            // 为什么不用 app.exit() 的自然收尾：macOS 上 tao 靠 NSApp stop 退出
+            // run loop，而 stop 需要一个事件才能唤醒。Exit 回调里等待子进程会占用
+            // 主线程，收尾可能因此不完成——现象是端口已释放、openconnect 已结束，
+            // 但 GUI 进程仍挂着（用户实测遇到）。此处所有需要落盘的数据在改动时
+            // 已写入，直接结束是安全的。
+            std::process::exit(0);
         }
         // macOS 点击 Dock 图标时重新显示窗口
         #[cfg(target_os = "macos")]
