@@ -61,7 +61,8 @@ OpenConnect 正是通过 `wintun.h` 的 API 加载 `wintun.dll`，因此随包�
 | --- | --- |
 | 位置 | `src-tauri/resources/openconnect/macos-arm64/vpnc-script` |
 | 许可证 | LGPL-2.1（随 OpenConnect 项目分发） |
-| 说明 | 该脚本负责写入路由与 DNS，本项目未修改其内容 |
+| 说明 | 该脚本负责写入路由与 DNS |
+| 修改 | **有修改**：两处 `networksetup -setdnsservers` 调用前增加空服务名判断（行尾标注 `# Octauri patch`）。全隧道 VPN 下默认路由指向 utun，查出的服务名为空，原脚本会报 `** Error: The parameters were not valid.`。修改由 `scripts/bundle-openconnect-macos.sh` 自动施加，可重复执行。依 LGPL-2.1 第 2 条，修改后的文件已标注修改说明 |
 
 ---
 

@@ -231,19 +231,44 @@ export async function trustServerCert() {
   state.certPrompt = null;
   const p = state.profiles.find((x) => x.id === prompt.profileId);
   if (!p) return;
+  const password = takePendingCredential(p.id);
   const saved = await saveProfile({ ...p, servercert: prompt.pin });
-  if (saved) await connectWith(saved.id);
+  if (!saved) return;
+  // 缓存已过期或不存在（证书模式除外）时，重新弹密码框，而不是发起必然失败的连接
+  if (password === undefined && saved.authMethod === "password") {
+    requestPassword(saved.id);
+    return;
+  }
+  await connectWith(saved.id, password);
 }
 
 export function dismissCertPrompt() {
   state.certPrompt = null;
+  pendingCredential = null;
 }
 
 // ------------------------------ 连接控制 ------------------------------
 
+/**
+ * 最近一次连接使用的密码，仅存于内存，用于「信任证书后立即重连」。
+ * 不落盘、不进响应式状态；重连取用后立即清空，60 秒后自动作废。
+ */
+let pendingCredential: { profileId: string; password: string; expires: number } | null = null;
+const CREDENTIAL_TTL_MS = 60_000;
+
+function takePendingCredential(profileId: string): string | undefined {
+  const c = pendingCredential;
+  pendingCredential = null;
+  if (!c || c.profileId !== profileId || Date.now() > c.expires) return undefined;
+  return c.password;
+}
+
 export async function connectWith(profileId: string, password?: string) {
   if (state.busy) return;
   state.busy = true;
+  pendingCredential = password
+    ? { profileId, password, expires: Date.now() + CREDENTIAL_TTL_MS }
+    : null;
   try {
     const pid = await api.connect(profileId, password);
     toast(`openconnect 已启动（pid ${pid}）`, "info");

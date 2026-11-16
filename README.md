@@ -90,6 +90,7 @@ octauri/
         ├── probe.rs             跨平台环境探测
         ├── store.rs             JSON 持久化
         ├── single.rs            单实例锁（本机回环端口 + 握手）
+        ├── clipboard.rs         剪贴板写入（root 运行时切回登录用户会话）
         ├── prefs.rs             全局偏好
         └── model.rs             数据模型
 ```
@@ -285,6 +286,11 @@ macOS 提权后进程以 root 运行，但配置文件仍然写到**真实登录
 `~/Library/Application Support/`（通过 `stat -f %Su /dev/console` 定位），
 不会落到 `/var/root` 那种用户看不到的地方。
 
+同理，**剪贴板按用户会话隔离**：root 进程直接写剪贴板，登录用户读不到。
+因此复制由后端完成——以 root 运行时通过 `launchctl asuser <登录用户 uid>`
+切换到登录会话执行 `pbcopy`（并显式指定 `LANG=en_US.UTF-8`，提权后环境变量
+被清空，不指定会导致中文丢失）。日志面板的「复制」按钮和 `Cmd+C` 都走这条路径。
+
 ---
 
 ## 6. 内置运行时与前置部署
@@ -432,6 +438,7 @@ npx tauri build --bundles nsis
 | 日志出现 `certificate verify failed` | 服务端证书不被信任（自签 / 中间证书缺失 / 时钟偏差） | 校时、补全 CA，或谨慎使用 `--servercert pin-sha256:...` |
 | 日志出现 `Login failed` / `401` | 账号密码错误或认证方式不匹配 | 核对凭据；证书模式勿勾选密码 |
 | 进程不退、端口占用 | openconnect 卡在 teardown | 点「强制终止」（SIGKILL / `taskkill /F /T`） |
+| 日志出现 `** Error: The parameters were not valid.` | 原版 vpnc-script 在全隧道下查不到网络服务名（macOS） | 内置脚本已修复。若用自定义 openconnect，DNS 实际已由 scutil 配好，该报错可忽略 |
 | macOS 关闭窗口后程序仍在 | 这是设计行为 | 托盘右键「退出」或 Cmd+Q 退出 |
 
 ---

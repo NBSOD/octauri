@@ -20,12 +20,29 @@ const filtered = computed<LogLine[]>(() => {
     if (filter.value === "error" && l.level !== "error") return false;
     if (filter.value === "warn" && l.level !== "warn" && l.level !== "error") return false;
     if (!q) return true;
-    return l.text.toLowerCase().includes(q) || (l.tag ?? "").includes(q);
+    return (
+      l.text.toLowerCase().includes(q) ||
+      (l.tag ?? "").includes(q) ||
+      (l.tag ? tagLabel(l.tag).includes(q) : false)
+    );
   });
 });
 
 const errorCount = computed(() => state.logs.filter((l) => l.level === "error").length);
 const warnCount = computed(() => state.logs.filter((l) => l.level === "warn").length);
+
+/** 故障标签的中文显示名；检索仍可用英文标签名（cert / auth …）匹配 */
+const TAG_LABELS: Record<string, string> = {
+  cert: "证书",
+  auth: "认证",
+  handshake: "握手",
+  dtls: "DTLS",
+  route: "路由",
+  dns: "DNS",
+};
+function tagLabel(tag: string): string {
+  return TAG_LABELS[tag] ?? tag;
+}
 
 function fmtTime(ts: number): string {
   const d = new Date(ts);
@@ -84,31 +101,14 @@ async function copyAll() {
     return;
   }
   const text = list.map((l) => `[${fmtTime(l.ts)}] ${l.text}`).join("\n");
-  let ok = false;
   try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      ok = true;
-    }
-  } catch {
-    ok = false;
+    // 由后端写剪贴板：macOS 下进程以 root 运行，浏览器剪贴板 API 写入的是
+    // root 的剪贴板，登录用户读不到
+    await api.clipboardWrite(text);
+    toast(`已复制 ${list.length} 行日志`, "success");
+  } catch (e) {
+    alertError("复制失败", e, "可改用「导出日志」保存为文件。");
   }
-  if (!ok) {
-    // 回退方案：隐藏 textarea + execCommand
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    try {
-      ok = document.execCommand("copy");
-    } catch {
-      ok = false;
-    }
-    document.body.removeChild(ta);
-  }
-  toast(ok ? `已复制 ${list.length} 行日志` : "复制失败，请手动选择文本", ok ? "success" : "error");
 }
 
 async function doExport() {
@@ -175,7 +175,7 @@ async function refreshFromBackend() {
         :class="[l.level, l.stream === 'app' ? 'is-app' : '']"
       >
         <span class="log-time">{{ fmtTime(l.ts) }}</span>
-        <span v-if="l.tag" class="log-tag" :class="l.tag">{{ l.tag }}</span>
+        <span v-if="l.tag" class="log-tag" :class="l.tag">{{ tagLabel(l.tag) }}</span>
         <span class="log-text" v-html="renderText(l.text)" />
       </div>
     </div>

@@ -44,4 +44,6 @@ export const api = {
 
   prefsGet: () => invoke<Prefs>("prefs_get"),
   prefsSet: (prefs: Prefs) => invoke<Prefs>("prefs_set", { prefs }),
+
+  clipboardWrite: (text: string) => invoke<void>("clipboard_write", { text }),
 };

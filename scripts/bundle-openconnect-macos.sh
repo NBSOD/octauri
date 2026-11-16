@@ -114,6 +114,20 @@ if [ -n "$VPNC" ]; then
   cp "$VPNC" "$OUT_DIR/vpnc-script"
   chmod +x "$OUT_DIR/vpnc-script"
   info "vpnc-script：$VPNC"
+
+  # 补丁：全隧道 VPN 下默认路由指向 utun，utun 不在 networksetup 的服务列表里，
+  # 查出的服务名为空，networksetup 会报 "** Error: The parameters were not valid."。
+  # 前面的 scutil 已完成 DNS 配置，这一步只是 macOS 新版的补充设置，
+  # 服务名为空时跳过即可。补丁可重复执行（幂等）。
+  if grep -q 'networksetup -setdnsservers "\$ACTIVE_NETWORK_SERVICE"' "$OUT_DIR/vpnc-script" \
+     && ! grep -q 'Octauri patch' "$OUT_DIR/vpnc-script"; then
+    # 显式使用系统 BSD sed：PATH 中若是 GNU sed / toybox，`-i ''` 语义不同会失败
+    /usr/bin/sed -i '' \
+      -e 's|^\([[:space:]]*\)networksetup -setdnsservers "\$ACTIVE_NETWORK_SERVICE" \(.*\)$|\1if [ -n "$ACTIVE_NETWORK_SERVICE" ]; then networksetup -setdnsservers "$ACTIVE_NETWORK_SERVICE" \2; fi  # Octauri patch: skip when service name is empty|' \
+      "$OUT_DIR/vpnc-script"
+    n=$(grep -c 'Octauri patch' "$OUT_DIR/vpnc-script" || true)
+    info "vpnc-script 已打补丁：${n} 处 networksetup 调用增加空服务名判断"
+  fi
 else
   warn "未找到 vpnc-script，路由与 DNS 不会被配置。可 brew install vpnc-scripts"
 fi

@@ -4,6 +4,7 @@
 //! openconnect 可执行文件提供，本程序只负责：配置管理、子进程拉起、
 //! 日志采集、状态呈现与进程终止。
 
+mod clipboard;
 mod commands;
 mod model;
 mod prefs;
@@ -48,7 +49,7 @@ fn relaunch_as_root_if_needed() -> bool {
     // do shell script 只有在输出被重定向时才不等待后台进程，
     // 这样授权通过后 osascript 立即返回，启动器随即退出，不会残留进程。
     let script = format!(
-        r#"do shell script "'{path}' > /dev/null 2>&1 &" with administrator privileges"#
+        r#"do shell script "'{path}' > /dev/null 2>&1 &" with prompt "Octauri 需要管理员权限来创建 VPN 虚拟网卡。" with administrator privileges"#
     );
 
     let ok = std::process::Command::new("osascript")
@@ -109,6 +110,55 @@ fn resolve_data_dir(app: &tauri::App) -> std::path::PathBuf {
     app.path()
         .app_data_dir()
         .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+/// macOS 菜单栏：Tauri 默认菜单是英文，这里自建简体中文版本。
+/// 「编辑」菜单同时承担 Cmd+C / Cmd+V 等快捷键（macOS 的复制快捷键由菜单驱动）。
+#[cfg(target_os = "macos")]
+fn build_app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    use tauri::menu::Submenu;
+    let app_menu = Submenu::with_items(
+        app,
+        "Octauri",
+        true,
+        &[
+            &PredefinedMenuItem::about(app, Some("关于 Octauri"), None)?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::services(app, Some("服务"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::hide(app, Some("隐藏 Octauri"))?,
+            &PredefinedMenuItem::hide_others(app, Some("隐藏其他"))?,
+            &PredefinedMenuItem::show_all(app, Some("全部显示"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::quit(app, Some("退出 Octauri"))?,
+        ],
+    )?;
+    let edit_menu = Submenu::with_items(
+        app,
+        "编辑",
+        true,
+        &[
+            &PredefinedMenuItem::undo(app, Some("撤销"))?,
+            &PredefinedMenuItem::redo(app, Some("重做"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::cut(app, Some("剪切"))?,
+            &PredefinedMenuItem::copy(app, Some("拷贝"))?,
+            &PredefinedMenuItem::paste(app, Some("粘贴"))?,
+            &PredefinedMenuItem::select_all(app, Some("全选"))?,
+        ],
+    )?;
+    let window_menu = Submenu::with_items(
+        app,
+        "窗口",
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, Some("最小化"))?,
+            &PredefinedMenuItem::fullscreen(app, Some("进入全屏幕"))?,
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, Some("关闭窗口"))?,
+        ],
+    )?;
+    Menu::with_items(app, &[&app_menu, &edit_menu, &window_menu])
 }
 
 fn show_main(app: &tauri::AppHandle) {
@@ -213,7 +263,11 @@ pub fn run() {
         );
     }
 
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(build_app_menu);
+
+    let app = builder
         .plugin(tauri_plugin_dialog::init())
         .setup(move |app| {
             if let Some(listener) = instance_listener.take() {
@@ -248,6 +302,7 @@ pub fn run() {
             commands::logs_export,
             prefs::prefs_get,
             prefs::prefs_set,
+            clipboard::clipboard_write,
         ])
         .build(tauri::generate_context!())
         .expect("failed to build tauri application");

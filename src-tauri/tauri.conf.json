@@ -31,7 +31,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "app", "dmg", "deb", "appimage"],
+    "targets": [
+      "nsis",
+      "app",
+      "dmg",
+      "deb",
+      "appimage"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -40,7 +46,8 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "resources/openconnect/": "openconnect/"
+      "resources/openconnect/": "openconnect/",
+      "infoplist/zh-Hans.lproj/": "zh-Hans.lproj/"
     },
     "shortDescription": "OpenConnect 图形客户端",
     "longDescription": "openconnect 命令行的图形外壳，提供多配置管理、一键连接、实时日志与托盘控制。不包含任何 VPN 协议实现。",
@@ -49,13 +56,18 @@
     "windows": {
       "nsis": {
         "installMode": "perMachine",
-        "languages": ["SimpChinese", "English"],
+        "languages": [
+          "SimpChinese",
+          "English"
+        ],
         "displayLanguageSelector": false
       }
     },
     "linux": {
       "deb": {
-        "depends": ["openconnect"]
+        "depends": [
+          "openconnect"
+        ]
       }
     },
     "macOS": {

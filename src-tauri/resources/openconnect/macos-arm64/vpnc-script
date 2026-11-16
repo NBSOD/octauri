@@ -709,7 +709,7 @@ search $DOMAINS"
 				# For newer MacOS versions it is needed to set DNS
 				ACTIVE_INTERFACE=`route -n get default | grep interface | awk '{print $2}'`
 				ACTIVE_NETWORK_SERVICE=`networksetup -listnetworkserviceorder | grep -B 1 "$ACTIVE_INTERFACE" | head -n 1 | awk '/\([0-9]+\)/{ print }'|cut -d " " -f2-`
-				networksetup -setdnsservers "$ACTIVE_NETWORK_SERVICE" $INTERNAL_IP4_DNS
+				if [ -n "$ACTIVE_NETWORK_SERVICE" ]; then networksetup -setdnsservers "$ACTIVE_NETWORK_SERVICE" $INTERNAL_IP4_DNS; fi  # Octauri patch: skip when service name is empty
 				;;
 		esac
 	fi
@@ -754,7 +754,7 @@ restore_resolvconf_generic() {
 				# For newer MacOS versions it is needed to unset DNS
 				ACTIVE_INTERFACE=`route -n get default | grep interface | awk '{print $2}'`
 				ACTIVE_NETWORK_SERVICE=`networksetup -listnetworkserviceorder | grep -B 1 "$ACTIVE_INTERFACE" | head -n 1 | awk '/\([0-9]+\)/{ print }'|cut -d " " -f2-`
-				networksetup -setdnsservers "$ACTIVE_NETWORK_SERVICE" Empty
+				if [ -n "$ACTIVE_NETWORK_SERVICE" ]; then networksetup -setdnsservers "$ACTIVE_NETWORK_SERVICE" Empty; fi  # Octauri patch: skip when service name is empty
 				;;
 		esac
 	fi

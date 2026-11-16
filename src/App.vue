@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import TopBar from "./components/TopBar.vue";
 import ProfileList from "./components/ProfileList.vue";
 import ControlPanel from "./components/ControlPanel.vue";
@@ -11,7 +11,8 @@ import AlertDialog from "./components/AlertDialog.vue";
 import PasswordDialog from "./components/PasswordDialog.vue";
 import CertDialog from "./components/CertDialog.vue";
 import Toasts from "./components/Toasts.vue";
-import { connectWith, initApp, pendingPasswordPrompt, state } from "./store";
+import { api } from "./api";
+import { connectWith, initApp, pendingPasswordPrompt, state, toast } from "./store";
 import type { Profile } from "./types";
 
 const profileDialog = ref(false);
@@ -76,8 +77,37 @@ async function submitPassword(password: string) {
   await connectWith(p.id, password);
 }
 
+/**
+ * 接管复制：选中文本后按 Cmd+C / Ctrl+C（或用菜单「拷贝」）时，
+ * 把选区交给后端写入登录用户的剪贴板。
+ * 输入框内的复制保持默认行为不受影响（那里通常是用户自己的内容）。
+ */
+function onCopy(e: ClipboardEvent) {
+  const target = e.target as HTMLElement | null;
+  if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) {
+    const el = target as HTMLInputElement | HTMLTextAreaElement;
+    const sel = el.value.substring(el.selectionStart ?? 0, el.selectionEnd ?? 0);
+    if (!sel) return;
+    e.preventDefault();
+    void api.clipboardWrite(sel).catch((err) => toast(`复制失败：${String(err)}`, "error"));
+    return;
+  }
+  const text = window.getSelection()?.toString() ?? "";
+  if (!text) return;
+  e.preventDefault();
+  void api
+    .clipboardWrite(text)
+    .then(() => toast("已复制", "success", 1200))
+    .catch((err) => toast(`复制失败：${String(err)}`, "error"));
+}
+
 onMounted(() => {
+  document.addEventListener("copy", onCopy);
   void initApp();
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("copy", onCopy);
 });
 </script>
 
