@@ -67,9 +67,17 @@ impl Runner {
         self.helper.lock().unwrap_or_else(|e| e.into_inner())
     }
 
-    #[cfg(target_os = "macos")]
+    /// 是否已接入 root 辅助进程（仅 macOS 使用；其他平台恒为 false，
+    /// 但保留该方法以便共享代码路径编译）。
     pub fn has_helper(&self) -> bool {
-        self.lock_helper().is_some()
+        #[cfg(target_os = "macos")]
+        {
+            self.lock_helper().is_some()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
     }
 
     fn clear_helper_error(&self) {
@@ -411,6 +419,10 @@ impl Runner {
         let mut child = cmd.spawn().map_err(|e| spawn_error_hint(&e, bin))?;
 
         let pid = child.id();
+        // 必须立即记录 pid：stop()/shutdown() 都以 running_pid() 判断是否有子进程。
+        // 早期版本只在 macOS 辅助进程回传 PID 时才写入，导致 Windows/Linux 上
+        // 「断开」「强制终止」永远报“没有运行中的进程”，退出时也清理不掉 openconnect。
+        self.pid.store(pid, Ordering::SeqCst);
         let boot = self.begin_session(profile);
 
         // 写入凭据后立即关闭 stdin
@@ -466,6 +478,7 @@ impl Runner {
     }
 
     /// 通过 root 辅助进程拉起 openconnect（macOS）。
+    #[cfg(target_os = "macos")]
     fn start_via_helper(
         self: &Arc<Self>,
         app: &AppHandle,
@@ -578,7 +591,9 @@ impl Runner {
             app,
             "app",
             if hard {
-                "强制终止 openconnect 进程（SIGKILL / taskkill /F）"
+                "强制终止 openconnect 进程（Windows: taskkill /F / Unix: SIGKILL）"
+            } else if cfg!(windows) {
+                "请求 openconnect 主动断开（Windows: 发送 Ctrl+C）"
             } else {
                 "请求 openconnect 主动断开（SIGTERM）"
             },
@@ -660,9 +675,13 @@ impl Runner {
         self.user_stop.store(true, Ordering::SeqCst);
         let _ = terminate(pid, false);
         // 等待回收线程把 pid 清零（即子进程已退出）。
-        // 上限 1.2 秒：实测 openconnect 收到 SIGTERM 后约 90ms 内退出（含 vpnc-script
-        // 还原路由），等太久会拖慢退出体感。
-        for _ in 0..12 {
+        // Unix：SIGTERM 后约 90ms 退出；Windows：Ctrl+C 后还要跑 vpnc-script
+        // （cscript 执行 JS），实测要 1~2 秒，所以这里给 3 秒。
+        #[cfg(windows)]
+        let wait_rounds = 30;
+        #[cfg(not(windows))]
+        let wait_rounds = 12;
+        for _ in 0..wait_rounds {
             if self.running_pid() != Some(pid) {
                 return;
             }
@@ -949,8 +968,37 @@ fn terminate(pid: u32, hard: bool) -> Result<(), String> {
 }
 
 #[cfg(windows)]
+fn send_ctrl_c(pid: u32) -> Result<(), String> {
+    use windows_sys::Win32::System::Console::{
+        AttachConsole, FreeConsole, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler, CTRL_C_EVENT,
+    };
+
+    // 本进程是 GUI 子系统，没有控制台，因此可以“附身”到目标进程的隐藏控制台。
+    if unsafe { AttachConsole(pid) } == 0 {
+        return Err(format!("AttachConsole({pid}) 失败"));
+    }
+    // 事件会发给该控制台上的所有进程；先让本进程忽略 Ctrl+C，避免把自己结束掉。
+    unsafe { SetConsoleCtrlHandler(None, 1) };
+    let sent = unsafe { GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) } != 0;
+    unsafe { FreeConsole() };
+    unsafe { SetConsoleCtrlHandler(None, 0) };
+
+    if sent {
+        Ok(())
+    } else {
+        Err("GenerateConsoleCtrlEvent 失败".into())
+    }
+}
+
+#[cfg(windows)]
 fn terminate(pid: u32, hard: bool) -> Result<(), String> {
-    // Windows 下 openconnect 为控制台程序，软终止通常无效，但仍先尝试 /T 终止进程树。
+    // 优雅断开：openconnect 是控制台程序，收 Ctrl+C 后会走正常流程，
+    // 调用 vpnc-script 还原路由与 DNS。不能只靠 taskkill（不带 /F 对控制台
+    // 进程无效，而且它输出的是本地化文本，按 UTF-8 解码就是乱码）。
+    if !hard && send_ctrl_c(pid).is_ok() {
+        return Ok(());
+    }
+
     let mut cmd = Command::new("taskkill");
     cmd.arg("/PID").arg(pid.to_string()).arg("/T");
     if hard {
@@ -964,22 +1012,23 @@ fn terminate(pid: u32, hard: bool) -> Result<(), String> {
     }
     let out = cmd
         .stdin(Stdio::null())
+        .stderr(Stdio::piped())
         .output()
         .map_err(|e| format!("执行 taskkill 失败：{e}"))?;
+
     if out.status.success() {
-        Ok(())
-    } else {
-        let msg = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        // 进程已结束也视为成功
-        if msg.to_lowercase().contains("not found")
-            || msg.contains("找不到")
-            || msg.contains("没有找到")
-        {
-            Ok(())
-        } else {
-            Err(format!("终止进程失败：{msg}"))
-        }
+        return Ok(());
     }
+    if hard {
+        // 只报退出码，绝不把 taskkill 的本地化 stderr 拼进界面（会乱码）。
+        return Err(format!(
+            "无法强制结束进程 {pid}（taskkill 退出码 {:?}）",
+            out.status.code()
+        ));
+    }
+    // 软终止失败（进程已退出 / 没有控制台可挂）：不弹错，交给 stop() 与
+    // shutdown() 里的兜底逻辑在宽限期后升级为 taskkill /F。
+    Ok(())
 }
 
 /// 把 std::io::Error 翻译成运维人员能直接照做的提示。

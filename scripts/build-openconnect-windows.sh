@@ -53,17 +53,25 @@ if [ ${#MISSING[@]} -gt 0 ]; then
   printf '\n  pacman -S --needed \\\n'
   printf '    mingw-w64-x86_64-toolchain \\\n'
   for p in "${MISSING[@]}"; do printf '    %s \\\n' "$p"; done
-  printf '    mingw-w64-x86_64-vpnc-scripts \\\n'
-  printf '    autoconf automake libtool pkgconf\n\n'
+  printf '    autoconf automake libtool pkgconf jq\n\n'
   die "安装后重新运行本脚本"
 fi
 
 # vpnc-script：openconnect 靠它配置路由与 DNS，缺了隧道能建但流量不通
+# 注意：MSYS2 仓库里没有 mingw-w64-x86_64-vpnc-scripts 这个包（早期文档有误），
+# 缺失时直接从 vpnc-scripts 上游取一份。
 VPNC_SCRIPT=""
 for cand in /mingw64/etc/vpnc/vpnc-script-win.js /mingw64/share/vpnc-scripts/vpnc-script-win.js; do
   [ -f "$cand" ] && VPNC_SCRIPT="$cand" && break
 done
-[ -n "$VPNC_SCRIPT" ] || die "找不到 vpnc-script-win.js，请安装 mingw-w64-x86_64-vpnc-scripts"
+if [ -z "$VPNC_SCRIPT" ]; then
+  VPNC_SCRIPT=/mingw64/share/vpnc-scripts/vpnc-script-win.js
+  info "未找到 vpnc-script-win.js，从上游下载到 $VPNC_SCRIPT"
+  mkdir -p "$(dirname "$VPNC_SCRIPT")"
+  curl -fL --retry 3 -o "$VPNC_SCRIPT" \
+    https://gitlab.com/openconnect/vpnc-scripts/raw/master/vpnc-script-win.js \
+    || die "下载 vpnc-script-win.js 失败"
+fi
 
 # ---------------------------------------------------------------- 下载源码
 mkdir -p "$SRC_DIR"
@@ -98,6 +106,10 @@ if [ ! -f Makefile ]; then
 fi
 
 info "make -j$(nproc)"
+# Makefile 里有一条 "vpnc-script-win.js" 规则，会用 curl+jq 访问 GitLab API
+# 重新生成该文件；jq 缺失或网络受限时 make 会在链接完成后报错退出（127）。
+# 预先放好该文件即可让 make 跳过这条规则。
+cp "$VPNC_SCRIPT" vpnc-script-win.js
 make -j"$(nproc)" > build.log 2>&1 || { tail -40 build.log; die "编译失败"; }
 
 [ -f openconnect.exe ] || die "未生成 openconnect.exe"
@@ -105,7 +117,13 @@ make -j"$(nproc)" > build.log 2>&1 || { tail -40 build.log; die "编译失败"; 
 # ---------------------------------------------------------------- 收集产物
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
-cp openconnect.exe "$OUT_DIR/"
+# libtool 在顶层生成的 openconnect.exe 只是启动 .libs/ 里真实程序的 wrapper，
+# 它本身没有链接任何依赖，拷走后无法运行，必须取 .libs/openconnect.exe。
+OC_BIN=openconnect.exe
+[ -f .libs/openconnect.exe ] && OC_BIN=.libs/openconnect.exe
+cp "$OC_BIN" "$OUT_DIR/"
+# 先放入运行时 DLL（libopenconnect 等），ldd 才能解析出二级依赖
+cp .libs/*.dll "$OUT_DIR/" 2>/dev/null || true
 cp "$VPNC_SCRIPT" "$OUT_DIR/"
 
 # 递归收集 mingw64 的依赖 DLL（含二级依赖）

@@ -23,6 +23,7 @@ const PATHS: Record<string, string> = {
   settings: `<path d="M12 2.6l2.1 2.1 2.9-.8.8 2.9 2.1 2.1-2.1 2.1-.8 2.9-2.9-.8L12 21.4l-2.1-2.2-2.9.8-.8-2.9-2.1-2.1 2.1-2.1.8-2.9 2.9.8z"/><circle cx="12" cy="12" r="3.1"/>`,
   info: `<circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 8h.01"/>`,
   link: `<path d="M10 13a5 5 0 0 0 7 0l2-2a5 5 0 0 0-7-7l-1 1"/><path d="M14 11a5 5 0 0 0-7 0l-2 2a5 5 0 0 0 7 7l1-1"/>`,
+  monitor: `<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>`,
   folder: `<path d="M3 7h6l2 2h10v10H3z"/>`,
   chevron: `<path d="M9 6l6 6-6 6"/>`,
 };

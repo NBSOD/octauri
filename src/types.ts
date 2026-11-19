@@ -74,8 +74,10 @@ export interface AppInfo {
   copyright: string;
 }
 
+export type ThemePref = "system" | "light" | "dark";
+
 export interface Prefs {
-  theme: "light" | "dark";
+  theme: ThemePref;
   openconnectPath: string | null;
   logRenderLimit: number;
 }

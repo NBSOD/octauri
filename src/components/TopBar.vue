@@ -13,8 +13,10 @@ const diagAlert = computed(
   () => (state.env?.warnings.length ?? 0) > 0 || state.conn.state === "error",
 );
 
+const isDark = computed(() => state.theme === "dark");
+
 function toggleTheme() {
-  setTheme(state.prefs.theme === "dark" ? "light" : "dark");
+  setTheme(isDark.value ? "light" : "dark");
 }
 </script>
 
@@ -40,10 +42,10 @@ function toggleTheme() {
 
     <button
       class="btn btn-icon btn-ghost"
-      :title="state.prefs.theme === 'dark' ? '切换到浅色主题' : '切换到深色主题'"
+      :title="isDark ? '切换到浅色主题' : '切换到深色主题'"
       @click="toggleTheme"
     >
-      <Icon :name="state.prefs.theme === 'dark' ? 'sun' : 'moon'" :size="15" />
+      <Icon :name="isDark ? 'sun' : 'moon'" :size="15" />
     </button>
 
     <button class="btn btn-icon btn-ghost" title="设置" @click="emit('open-settings')">

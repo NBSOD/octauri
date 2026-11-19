@@ -6,6 +6,7 @@
  */
 import { computed, reactive } from "vue";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { api, errorText } from "./api";
 import type {
   AppInfo,
@@ -16,6 +17,7 @@ import type {
   Prefs,
   Profile,
   StateSnapshot,
+  ThemePref,
 } from "./types";
 
 export interface Toast {
@@ -50,10 +52,12 @@ export const state = reactive({
   env: null as EnvReport | null,
   info: null as AppInfo | null,
   prefs: {
-    theme: "dark",
+    theme: "system",
     openconnectPath: null,
     logRenderLimit: 3000,
   } as Prefs,
+  /** 实际生效的主题（由 prefs.theme 与系统偏好共同决定） */
+  theme: "dark" as "light" | "dark",
   /** 单调递增，供日志面板判断是否需要自动滚动 */
   logTick: 0,
   busy: false,
@@ -136,10 +140,36 @@ export function closeAlert() {
 
 // ------------------------------ 主题 ------------------------------
 
-function applyTheme(theme: "light" | "dark") {
+const systemDark = window.matchMedia("(prefers-color-scheme: dark)");
+
+/** 把 "system" 解析成实际的 light/dark。 */
+function resolveTheme(pref: ThemePref): "light" | "dark" {
+  if (pref === "system") return systemDark.matches ? "dark" : "light";
+  return pref;
+}
+
+/**
+ * 同时同步原生窗口主题（Windows 标题栏 / macOS 外观）。
+ * 失败时忽略：老系统或缺少 window 权限不应影响界面本身。
+ */
+function syncWindowTheme(pref: ThemePref) {
+  void getCurrentWindow()
+    .setTheme(pref === "system" ? null : pref)
+    .catch(() => undefined);
+}
+
+function applyTheme(pref: ThemePref) {
+  const theme = resolveTheme(pref);
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme;
+  state.theme = theme;
+  syncWindowTheme(pref);
 }
+
+// 系统主题变化时，只有「跟随系统」模式需要重新应用
+systemDark.addEventListener("change", () => {
+  if (state.prefs.theme === "system") applyTheme("system");
+});
 
 // ------------------------------ 初始化 ------------------------------
 
@@ -418,7 +448,7 @@ export async function updatePrefs(patch: Partial<Prefs>) {
   }
 }
 
-export function setTheme(theme: "light" | "dark") {
+export function setTheme(theme: ThemePref) {
   void updatePrefs({ theme });
 }
 

@@ -182,7 +182,14 @@ fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
             }
         });
 
-    if let Ok(img) = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png")) {
+    // macOS 用模板图（纯黑 + 透明，系统按菜单栏明暗自动反色）；
+    // Windows / Linux 用彩色迷你图标，深色与浅色任务栏都能看清。
+    #[cfg(target_os = "macos")]
+    const TRAY_ICON: &[u8] = include_bytes!("../icons/tray.png");
+    #[cfg(not(target_os = "macos"))]
+    const TRAY_ICON: &[u8] = include_bytes!("../icons/tray-windows.png");
+
+    if let Ok(img) = tauri::image::Image::from_bytes(TRAY_ICON) {
         builder = builder.icon(img);
     }
     #[cfg(target_os = "macos")]

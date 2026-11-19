@@ -78,7 +78,7 @@ pub fn probe(resource_openconnect: Option<PathBuf>, override_path: Option<&str>)
     }
 
     // 3) TUN/TAP 与 wintun
-    let (tun_ready, tun_detail) = detect_tun();
+    let (tun_ready, tun_detail) = detect_tun(openconnect_path.as_deref());
     if !tun_ready {
         warnings.push(format!("虚拟网卡不可用：{tun_detail}"));
     }
@@ -247,7 +247,7 @@ fn detect_wintun(_platform: &str, _openconnect_path: Option<&str>) -> (Option<bo
 
 /// TUN/TAP 可用性检测。
 #[cfg(target_os = "linux")]
-fn detect_tun() -> (bool, String) {
+fn detect_tun(_openconnect: Option<&str>) -> (bool, String) {
     let dev = Path::new("/dev/net/tun");
     if !dev.exists() {
         return (
@@ -270,7 +270,7 @@ fn detect_tun() -> (bool, String) {
 }
 
 #[cfg(target_os = "macos")]
-fn detect_tun() -> (bool, String) {
+fn detect_tun(_openconnect: Option<&str>) -> (bool, String) {
     // macOS 的 utun 由内核按需创建，通过 ifconfig -l 观察是否具备 utun 接口族。
     let out = Command::new("ifconfig")
         .arg("-l")
@@ -293,16 +293,31 @@ fn detect_tun() -> (bool, String) {
 }
 
 #[cfg(target_os = "windows")]
-fn detect_tun() -> (bool, String) {
-    // Windows 依赖 wintun 提供虚拟网卡，此处只做粗略检测，详细结果见 wintun 字段。
-    let sysroot = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".into());
-    let dll = PathBuf::from(&sysroot).join("System32").join("wintun.dll");
-    if dll.is_file() {
-        (true, "系统目录已存在 wintun.dll。".into())
-    } else {
-        (
-            false,
-            "系统目录未发现 wintun.dll（详见 wintun 检测结果）。".into(),
-        )
+fn detect_tun(openconnect: Option<&str>) -> (bool, String) {
+    // Windows 的虚拟网卡由 wintun 提供，而 wintun.dll 是 side-by-side 部署在
+    // openconnect.exe 同目录的，不会出现在 System32（那是驱动注册后的另一回事）。
+    // 只查 System32 会在便携版上误报“虚拟网卡不可用”，这里与 detect_wintun 保持一致。
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if let Some(p) = openconnect {
+        if let Some(parent) = Path::new(p).parent() {
+            dirs.push(parent.to_path_buf());
+        }
     }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            dirs.push(parent.to_path_buf());
+        }
+    }
+    if let Ok(sysroot) = std::env::var("SystemRoot") {
+        dirs.push(PathBuf::from(sysroot).join("System32"));
+    }
+    for d in &dirs {
+        if d.join("wintun.dll").is_file() {
+            return (true, format!("wintun.dll 就绪：{}", d.join("wintun.dll").display()));
+        }
+    }
+    (
+        false,
+        "未找到 wintun.dll（详见 wintun 检测结果）。".into(),
+    )
 }

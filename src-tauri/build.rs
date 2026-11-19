@@ -1,4 +1,7 @@
 fn main() {
+    // 清单文件被 include_str! 读取；显式声明依赖，改动后才会重新嵌入，
+    // 否则修改 requestedExecutionLevel 不会触发重编（cargo 看不到 include_str 依赖）。
+    println!("cargo:rerun-if-changed=windows-app-manifest.xml");
     #[allow(unused_mut)]
     let mut attrs = tauri_build::Attributes::new();
 

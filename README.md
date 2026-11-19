@@ -34,6 +34,7 @@ Windows / macOS / Linux 三端。
 | 状态可视化 | 未连接 → 握手进行中 → 已连通 → 异常断开；含连接时长、pid、握手超时提醒 |
 | 实时日志 | 流式输出；证书 / 认证 / 握手 / DTLS / 路由 标签着色；关键字检索与高亮；一键复制全部；导出到文件；前后端双重缓冲上限 |
 | 托盘 | 最小化到托盘；右键菜单：连接 / 断开 / 打开窗口 / 退出；左键唤起窗口 |
+| 外观 | WinUI 3 / Liquid Glass 风格；深色 / 浅色 / **跟随系统**；半透明毛玻璃面板与原生标题栏主题同步 |
 | 跨平台 | Windows / macOS 内置运行时优先，找不到再回退系统安装；Linux 走 PATH；各自检测 wintun / utun / tun |
 
 ---
@@ -50,7 +51,7 @@ octauri/
 ├── vite.config.ts               Vite 配置（固定 1420 端口）
 ├── index.html
 ├── scripts/
-│   ├── gen-icons.py                 零依赖图标生成（PNG/ICO/ICNS）
+│   ├── gen-icons.py                 图标生成（Pillow；PNG/ICO/ICNS/托盘）
 │   ├── bundle-openconnect-macos.sh  生成 macOS 自包含运行时（重写 install_name + 重签名）
 │   ├── mock-openconnect.sh          假 openconnect，无网关时本地联调
 │   └── build-openconnect-windows.sh 在 Windows 上编译并收集运行时（MSYS2）
@@ -80,7 +81,7 @@ octauri/
     ├── tauri.conf.json
     ├── windows-app-manifest.xml requireAdministrator + PerMonitorV2 DPI
     ├── capabilities/default.json
-    ├── icons/                   生成的图标（PNG / ICO / ICNS）
+    ├── icons/                   生成的图标（PNG / ICO / ICNS / 托盘）
     ├── resources/openconnect/
     │   ├── macos-arm64/        内置的 macOS 运行时（自包含，随仓库分发）
     │   └── README.txt          Windows 运行时放置说明
@@ -150,7 +151,7 @@ sudo apt install openconnect
 
 ```bash
 npm install
-npm run icons        # 仅在需要重新生成图标时执行（需要 python3）
+npm run icons        # 仅在需要重新生成图标时执行（需要 python3 + Pillow）
 OCTAURI_NO_ELEVATE=1 npm run dev   # 开发模式（热重载）；macOS 下跳过自动提权，免得每次输密码
 npm run build        # 生产构建 + 打包当前平台安装包
 npm run typecheck    # 前端类型检查
@@ -168,6 +169,11 @@ npx tauri build --no-bundle             # 产物：src-tauri/target/release/octa
 
 > **交叉编译提示**：Tauri 不支持跨平台打包安装包。Windows 包须在 Windows 上构建，
 > macOS 包须在 macOS 上构建。建议使用 GitHub Actions 或本地虚拟机。
+
+> **Windows 无 MSVC 的替代方案**：如果机器上只装了 MSYS2 的 mingw 工具链，
+> 可以执行 `pwsh -File scripts/build-windows-gnu.ps1`，用 GNU 目标一键产出
+> `dist/Octauri-portable/`（含 exe、`WebView2Loader.dll`、`openconnect/` 运行时）。
+> 注意 GNU 构建的 WebView2 是动态加载，`WebView2Loader.dll` 必须与 exe 同目录。
 
 ---
 
@@ -264,7 +270,7 @@ public 仓库 Actions 分钟数不限；private 仓库 macOS runner 按 10 倍�
 
 - 确认 `src-tauri/resources/openconnect/` 下的二进制已 `git add`（体积约 10–20 MB）；
 - `Cargo.lock` 与 `package-lock.json` 必须入库，否则 CI 无法复现依赖版本；
-- `src-tauri/icons/` 已入库，CI 无需执行 `scripts/gen-icons.py`（该脚本依赖 python3）。
+- `src-tauri/icons/` 已入库，CI 无需执行 `scripts/gen-icons.py`（该脚本需要 python3 + Pillow）。
 
 ---
 
@@ -426,9 +432,9 @@ x86-64（必须与内置的 amd64 `wintun.dll` 一致）。
 首次运行会列出缺少的 pacman 包，装完再跑一次即可。产物 `windows-runtime/`
 里的文件全部拷入 `src-tauri/resources/openconnect/` 后提交。
 
-其中 `vpnc-script-win.js` 来自 `mingw-w64-x86_64-vpnc-scripts` —— **必需**。
-openconnect 靠它配置路由与 DNS，缺失时会报 `vpnc-script not found`，
-隧道虽建立但流量不通。
+其中 `vpnc-script-win.js` **必需**（openconnect 靠它配置路由与 DNS，缺失时会报
+`vpnc-script not found`，隧道虽建立但流量不通）。MSYS2 仓库中并没有
+`mingw-w64-x86_64-vpnc-scripts` 这个包，脚本会从 vpnc-scripts 上游自动下载。
 
 > 历史说明：`openconnect-gui` 项目发布过 2019 年的 `win32` 安装包，内含旧版
 > openconnect。**不要使用**：它是 32 位（无法加载 amd64 的 `wintun.dll`），

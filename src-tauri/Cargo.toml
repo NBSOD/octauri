@@ -9,7 +9,11 @@ rust-version = "1.77"
 
 [lib]
 name = "octauri_lib"
-crate-type = ["staticlib", "cdylib", "rlib"]
+# 桌面端只需要 rlib（staticlib 仅为兼容 Tauri 移动端模板保留）。
+# 注意：不要加回 "cdylib" —— Windows-GNU 目标下 rustc 会把全部符号写进
+# 导出表（10 万+），超出 PE 65535 个序号的硬限制而链接失败；
+# 且本项目没有移动端目标，cdylib 并无用途。
+crate-type = ["staticlib", "rlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
@@ -28,7 +32,15 @@ libc = "0.2"
 windows-sys = { version = "0.59", features = [
     "Win32_Foundation",
     "Win32_UI_Shell",
+    "Win32_System_Console",
 ] }
+
+[features]
+# 生产构建必须启用这个 feature（tauri CLI 的 build 会自动加）：
+# Tauri 用 tauri/custom-protocol 区分 dev / prod，不启用时 tauri 认为仍是
+# 开发构建，会去加载 build.devUrl（http://localhost:1420），
+# 双击 exe 就会看到 "localhost 拒绝连接"。
+custom-protocol = ["tauri/custom-protocol"]
 
 [profile.release]
 codegen-units = 1

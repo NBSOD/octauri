@@ -38,10 +38,10 @@ async function submit() {
           <div class="actions">
             <button
               class="btn"
-              :class="{ 'btn-primary': state.prefs.theme === 'dark' }"
-              @click="updatePrefs({ theme: 'dark' })"
+              :class="{ 'btn-primary': state.prefs.theme === 'system' }"
+              @click="updatePrefs({ theme: 'system' })"
             >
-              <Icon name="moon" :size="14" /> 深色
+              <Icon name="monitor" :size="14" /> 跟随系统
             </button>
             <button
               class="btn"
@@ -50,7 +50,17 @@ async function submit() {
             >
               <Icon name="sun" :size="14" /> 浅色
             </button>
+            <button
+              class="btn"
+              :class="{ 'btn-primary': state.prefs.theme === 'dark' }"
+              @click="updatePrefs({ theme: 'dark' })"
+            >
+              <Icon name="moon" :size="14" /> 深色
+            </button>
           </div>
+          <span class="hint">
+            跟随系统时，界面与原生标题栏会随 Windows / macOS 的深浅色设置自动切换。
+          </span>
         </div>
 
         <div class="field">

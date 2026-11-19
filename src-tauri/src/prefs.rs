@@ -6,7 +6,7 @@ use std::sync::Mutex;
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct PrefsData {
-    /// light | dark
+    /// light | dark | system
     pub theme: String,
     /// 全局兜底 openconnect 路径（优先级低于单个 Profile 的覆盖值）
     pub openconnect_path: Option<String>,
@@ -17,7 +17,7 @@ pub struct PrefsData {
 impl Default for PrefsData {
     fn default() -> Self {
         Self {
-            theme: "dark".into(),
+            theme: "system".into(),
             openconnect_path: None,
             log_render_limit: 3000,
         }
