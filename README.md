@@ -241,8 +241,9 @@ src-tauri/resources/openconnect/vpnc-script-win.js   # 必需，否则路由与 
 
 **macOS 签名与公证（可选）**
 
-workflow 已预留全部签名变量，**secret 为空时 Tauri 自动跳过签名**，无需改动 YAML。
-要启用签名，在仓库 Settings → Secrets 中配置：
+workflow 只在配置了 `APPLE_CERTIFICATE` 时才注入签名变量并尝试签名；未配置时完全跳过
+（**不能**把空的 `APPLE_CERTIFICATE` 传给 Tauri，否则它会尝试导入空 p12 并报
+`Unable to decode the provided data`）。要启用签名，在仓库 Settings → Secrets 中配置：
 
 | Secret | 说明 |
 | --- | --- |

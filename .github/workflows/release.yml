@@ -79,19 +79,38 @@ jobs:
           fi
           "$OC" --version
 
+      # 只有确实配置了证书时才注入签名变量。
+      # 注意：不能把空的 APPLE_CERTIFICATE 作为环境变量传给 tauri ——
+      # 变量存在但为空时 Tauri 仍会尝试导入 p12，报
+      # "SecKeychainItemImport: Unable to decode the provided data"。
+      - name: 配置 macOS 签名（可选）
+        if: matrix.platform == 'macos-latest'
+        shell: bash
+        env:
+          HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
+          CERT: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASS: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ACCOUNT: ${{ secrets.APPLE_ID }}
+          APPLE_APP_PASS: ${{ secrets.APPLE_PASSWORD }}
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          if [ "$HAS_APPLE_CERT" != "true" ]; then
+            echo "未配置 APPLE_CERTIFICATE，跳过签名（产物为未签名 dmg）"
+            exit 0
+          fi
+          printf 'APPLE_CERTIFICATE=%s\n' "$CERT" >> "$GITHUB_ENV"
+          printf 'APPLE_CERTIFICATE_PASSWORD=%s\n' "$CERT_PASS" >> "$GITHUB_ENV"
+          printf 'APPLE_SIGNING_IDENTITY=%s\n' "$SIGN_IDENTITY" >> "$GITHUB_ENV"
+          printf 'APPLE_ID=%s\n' "$APPLE_ACCOUNT" >> "$GITHUB_ENV"
+          printf 'APPLE_PASSWORD=%s\n' "$APPLE_APP_PASS" >> "$GITHUB_ENV"
+          printf 'APPLE_TEAM_ID=%s\n' "$TEAM" >> "$GITHUB_ENV"
+
       # 有 tag 时创建草稿 release；手动触发时只构建并上传 artifact
       - name: 构建并打包
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # 以下变量留空时 Tauri 自动跳过签名与公证，无需删改 workflow。
-          # 配置方式见 README「GitHub Actions 自动打包」一节。
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: "Octauri ${{ github.ref_name }}"
