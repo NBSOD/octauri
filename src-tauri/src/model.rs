@@ -32,6 +32,10 @@ pub struct Profile {
     /// AnyConnect / Pulse / GlobalProtect / NC 等，留空为 openconnect 自动探测
     #[serde(default)]
     pub protocol: String,
+    /// Cisco ASA 等多组网关的 Group 名（--authgroup）。
+    /// 留空时 openconnect 会提示 GROUP，程序会弹出选择框。
+    #[serde(default)]
+    pub auth_group: String,
     /// 证书认证：客户端证书路径 (PEM)
     #[serde(default)]
     pub certificate_path: String,
@@ -62,6 +66,7 @@ impl Profile {
         p.gateway = p.gateway.trim().to_string();
         p.username = p.username.trim().to_string();
         p.protocol = p.protocol.trim().to_string();
+        p.auth_group = p.auth_group.trim().to_string();
         p.certificate_path = p.certificate_path.trim().to_string();
         p.key_path = p.key_path.trim().to_string();
         p.extra_args = p.extra_args.trim().to_string();
@@ -180,4 +185,12 @@ pub struct CertPrompt {
     pub reason: String,
     /// 形如 pin-sha256:AbCd...
     pub pin: String,
+}
+
+/// 服务器要求选择 Group（Cisco ASA 多组）时推给前端。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GroupPrompt {
+    pub profile_id: String,
+    pub groups: Vec<String>,
 }

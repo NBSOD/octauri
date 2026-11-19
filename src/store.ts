@@ -13,6 +13,7 @@ import type {
   CertPrompt,
   ConnStateName,
   EnvReport,
+  GroupPrompt,
   LogLine,
   Prefs,
   Profile,
@@ -65,6 +66,8 @@ export const state = reactive({
   alert: null as AlertBox | null,
   /** 服务器证书待确认 */
   certPrompt: null as CertPrompt | null,
+  /** 服务器要求选择 Group（Cisco ASA 多组） */
+  groupPrompt: null as GroupPrompt | null,
   /**
    * root 辅助进程状态（macOS）。GUI 以普通用户运行，openconnect 由它以 root 拉起。
    * 授权在启动时进行一次，失败时连接不可用。
@@ -198,6 +201,9 @@ export async function initApp() {
   await listen<CertPrompt>("oc://cert-prompt", (e) => {
     state.certPrompt = e.payload;
   });
+  await listen<GroupPrompt>("oc://group-prompt", (e) => {
+    state.groupPrompt = e.payload;
+  });
   await listen("oc://helper-ready", () => {
     state.helper.state = "ready";
     state.helper.error = "";
@@ -328,6 +334,28 @@ export function dismissCertPrompt() {
   pendingCredential = null;
 }
 
+/** 用户选择了 GROUP：写入配置并带 --authgroup 重连 */
+export async function chooseGroup(group: string) {
+  const prompt = state.groupPrompt;
+  if (!prompt) return;
+  state.groupPrompt = null;
+  const p = state.profiles.find((x) => x.id === prompt.profileId);
+  if (!p) return;
+  const password = takePendingCredential(p.id);
+  const saved = await saveProfile({ ...p, authGroup: group });
+  if (!saved) return;
+  if (password === undefined && saved.authMethod === "password") {
+    requestPassword(saved.id);
+    return;
+  }
+  await connectWith(saved.id, password, group);
+}
+
+export function dismissGroupPrompt() {
+  state.groupPrompt = null;
+  pendingCredential = null;
+}
+
 // ------------------------------ 连接控制 ------------------------------
 
 /**
@@ -344,14 +372,14 @@ function takePendingCredential(profileId: string): string | undefined {
   return c.password;
 }
 
-export async function connectWith(profileId: string, password?: string) {
+export async function connectWith(profileId: string, password?: string, authGroup?: string) {
   if (state.busy) return;
   state.busy = true;
   pendingCredential = password
     ? { profileId, password, expires: Date.now() + CREDENTIAL_TTL_MS }
     : null;
   try {
-    const pid = await api.connect(profileId, password);
+    const pid = await api.connect(profileId, password, authGroup);
     toast(`openconnect 已启动（pid ${pid}）`, "info");
   } catch (e) {
     alertError(

@@ -10,6 +10,7 @@ import AboutDialog from "./components/AboutDialog.vue";
 import AlertDialog from "./components/AlertDialog.vue";
 import PasswordDialog from "./components/PasswordDialog.vue";
 import CertDialog from "./components/CertDialog.vue";
+import GroupDialog from "./components/GroupDialog.vue";
 import Toasts from "./components/Toasts.vue";
 import { api } from "./api";
 import { connectWith, initApp, pendingPasswordPrompt, state, toast } from "./store";
@@ -113,6 +114,7 @@ onBeforeUnmount(() => {
       @cancel="passwordOpen = false"
     />
     <CertDialog />
+    <GroupDialog />
     <AlertDialog />
     <Toasts />
   </div>

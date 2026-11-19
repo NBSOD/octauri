@@ -32,8 +32,12 @@ export const api = {
   envProbe: (profileId?: string) =>
     invoke<EnvReport>("env_probe", { profileId: profileId ?? null }),
 
-  connect: (profileId: string, password?: string) =>
-    invoke<number>("connect", { profileId, password: password ?? null }),
+  connect: (profileId: string, password?: string, authGroup?: string) =>
+    invoke<number>("connect", {
+      profileId,
+      password: password ?? null,
+      authGroup: authGroup ?? null,
+    }),
   disconnect: () => invoke<void>("disconnect"),
   forceKill: () => invoke<void>("force_kill"),
 

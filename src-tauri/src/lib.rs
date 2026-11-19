@@ -318,6 +318,7 @@ pub fn run() {
                             username: "tester".into(),
                             auth_method: crate::model::AuthMethod::Password,
                             protocol: String::new(),
+                            auth_group: String::new(),
                             certificate_path: String::new(),
                             key_path: String::new(),
                             extra_args: "--scenario=hang".into(),

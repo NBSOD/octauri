@@ -92,6 +92,20 @@ async function submit() {
           </label>
         </div>
 
+        <label class="field">
+          <span class="label">Group（可选，Cisco ASA 多组网关）</span>
+          <input
+            v-model="form.authGroup"
+            type="text"
+            placeholder="例如 thirdparty-otp"
+            spellcheck="false"
+          />
+          <span class="hint">
+            对应 openconnect 的 <code>--authgroup</code>。留空时如果服务器要求选择 Group，
+            连接过程中会弹出选择框，选定后自动写入此配置并重连。
+          </span>
+        </label>
+
         <!-- 密码模式：密码不落盘，连接时输入 -->
         <p v-if="form.authMethod === 'password'" class="hint">
           密码不会保存在本地，也不会写入配置文件。每次连接时弹窗输入，
@@ -179,3 +193,14 @@ async function submit() {
     </div>
   </div>
 </template>
+
+<style scoped>
+code {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 0 4px;
+}
+</style>

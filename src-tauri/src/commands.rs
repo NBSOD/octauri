@@ -145,13 +145,19 @@ pub fn connect(
     state: State<'_, AppState>,
     profile_id: String,
     password: Option<String>,
+    // 用户在 GROUP 选择框里选中的组名；为 None 时使用配置里的 authGroup
+    auth_group: Option<String>,
 ) -> Result<u32, String> {
-    let profile = state
+    let mut profile = state
         .store
         .load()
         .into_iter()
         .find(|p| p.id == profile_id)
         .ok_or_else(|| "配置不存在，可能已被删除".to_string())?;
+
+    if let Some(group) = auth_group.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        profile.auth_group = group.to_string();
+    }
 
     // 1) 解析可执行文件
     let report = probe::probe(

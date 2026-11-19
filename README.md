@@ -31,6 +31,7 @@ Windows / macOS / Linux 三端。
 | 多配置管理 | 本地 JSON 持久化；新建 / 编辑 / 删除 / 导入 / 导出；每配置独立可执行文件路径与额外参数 |
 | 凭据 | **密码不落盘**：只保存网关与账号，每次连接弹窗输入，经 stdin 传给 openconnect |
 | 连接控制 | 一键连接 / 断开；优雅终止（SIGTERM）→ 6 秒宽限 → 强制 SIGKILL；独立「强制终止」按钮处理卡死进程 |
+| 网关兼容 | Cisco ASA 多 Group：识别 `GROUP: [...]` 提示并弹窗选择，写入 `--authgroup` 后自动重连；也可在配置里预先填写 |
 | 状态可视化 | 未连接 → 握手进行中 → 已连通 → 异常断开；含连接时长、pid、握手超时提醒 |
 | 实时日志 | 流式输出；证书 / 认证 / 握手 / DTLS / 路由 标签着色；关键字检索与高亮；一键复制全部；导出到文件；前后端双重缓冲上限 |
 | 托盘 | 最小化到托盘；右键菜单：连接 / 断开 / 打开窗口 / 退出；左键唤起窗口 |
@@ -522,6 +523,7 @@ npx tauri build --bundles nsis
 | 日志出现 `DTLS ... failed` / 降级为 TLS | UDP 被防火墙拦截 | 属正常降级，连接仍可用但吞吐下降；可在额外参数加 `--no-dtls` 消除告警 |
 | 日志出现 `certificate verify failed` | 服务端证书不被信任（自签 / 中间证书缺失 / 时钟偏差） | 校时、补全 CA，或谨慎使用 `--servercert pin-sha256:...` |
 | 日志出现 `Login failed` / `401` | 账号密码错误或认证方式不匹配 | 核对凭据；证书模式勿勾选密码 |
+| 日志出现 `GROUP: [a\|b]:` 后认证失败 | Cisco ASA 多组网关要求先选 Group | 连接时会弹窗选择；也可在配置里填写 Group（`--authgroup`） |
 | 进程不退、端口占用 | openconnect 卡在 teardown | 点「强制终止」（SIGKILL / `taskkill /F /T`） |
 | 退出 Octauri 后仍有 root 进程残留 | 1.0 早期版本退出时未结束 openconnect 子进程 | 已修复：任何退出路径（托盘、Cmd+Q、SIGTERM/SIGINT/SIGHUP）都会先 SIGTERM openconnect，3 秒未退再 SIGKILL。若仍残留可 `sudo pkill -f Octauri.app` |
 | 日志出现 `** Error: The parameters were not valid.` | 原版 vpnc-script 在全隧道下查不到网络服务名（macOS） | 内置脚本已修复。若用自定义 openconnect，DNS 实际已由 scutil 配好，该报错可忽略 |

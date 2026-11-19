@@ -9,6 +9,8 @@ export interface Profile {
   username: string;
   authMethod: AuthMethod;
   protocol: string;
+  /** Cisco ASA 等多组网关的 Group 名（openconnect --authgroup），留空则由服务器提示 */
+  authGroup: string;
   certificatePath: string;
   keyPath: string;
   extraArgs: string;
@@ -89,6 +91,7 @@ export const emptyProfile = (): Profile => ({
   username: "",
   authMethod: "password",
   protocol: "",
+  authGroup: "",
   certificatePath: "",
   keyPath: "",
   extraArgs: "",
@@ -102,6 +105,12 @@ export interface CertPrompt {
   profileId: string;
   reason: string;
   pin: string;
+}
+
+/** 服务器要求选择 Group 时由后端推送（Cisco ASA 多组） */
+export interface GroupPrompt {
+  profileId: string;
+  groups: string[];
 }
 
 /** root 辅助进程状态（macOS） */
