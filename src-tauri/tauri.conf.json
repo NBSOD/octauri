@@ -34,9 +34,7 @@
     "targets": [
       "nsis",
       "app",
-      "dmg",
-      "deb",
-      "appimage"
+      "dmg"
     ],
     "icon": [
       "icons/32x32.png",
@@ -61,13 +59,6 @@
           "English"
         ],
         "displayLanguageSelector": false
-      }
-    },
-    "linux": {
-      "deb": {
-        "depends": [
-          "openconnect"
-        ]
       }
     },
     "macOS": {

@@ -44,7 +44,7 @@ Windows / macOS / Linux 三端。
 ```
 octauri/
 ├── .github/
-│   └── workflows/release.yml    三平台 CI 构建（dmg / nsis+便携版 / deb）
+│   └── workflows/release.yml    双平台 CI 构建（macOS dmg / Windows nsis）
 ├── .gitignore
 ├── .gitattributes               二进制与行尾规则
 ├── package.json                 前端依赖与脚本
@@ -165,7 +165,7 @@ npx tauri build --no-bundle             # 产物：src-tauri/target/release/octa
 ```
 
 打包目标在 `src-tauri/tauri.conf.json` 的 `bundle.targets` 中配置，默认
-`["nsis", "app", "dmg", "deb", "appimage"]`，实际只会构建当前平台的可用目标。
+`["nsis", "app", "dmg"]`（Windows 安装包 / macOS 应用与 dmg），实际只会构建当前平台的可用目标。
 
 > **交叉编译提示**：Tauri 不支持跨平台打包安装包。Windows 包须在 Windows 上构建，
 > macOS 包须在 macOS 上构建。建议使用 GitHub Actions 或本地虚拟机。
@@ -209,17 +209,16 @@ chmod +x scripts/mock-openconnect.sh
 ### GitHub Actions 自动打包
 
 仓库已包含 `.github/workflows/release.yml`。Tauri 不支持交叉编译打包，因此
-CI 用矩阵在三个原生 runner 上分别构建：
+CI 用矩阵在 macOS 与 Windows 两个原生 runner 上分别构建（Linux 暂不打包）：
 
 | Runner | 产物 |
 | --- | --- |
-| `macos-latest`（arm64） | `.dmg` + `.app` |
-| `windows-latest` | NSIS 安装包 `.exe` + 便携版 `zip` |
-| `ubuntu-22.04` | `.deb` |
+| `macos-latest`（arm64） | `.dmg`（`.app` 仅作为打包中间产物） |
+| `windows-latest` | NSIS 安装包 `.exe` |
 
 **触发方式**
 
-- 推送 tag：`git tag v1.0.0 && git push origin v1.0.0` → 构建并创建**草稿** release，产物附在 release 上；
+- 推送 tag：`git tag v1.0.0 && git push origin v1.0.0` → 构建并创建**草稿** release，dmg / exe 附在 release 上；
 - 手动触发：仓库 Actions 页 → build → Run workflow → 产物在本次运行的 Artifacts 中下载（不创建 release）。
 
 **前置条件：Windows 运行时必须入库**
@@ -471,7 +470,7 @@ x86-64（必须与内置的 amd64 `wintun.dll` 一致）。
 
 ### 6.4 两类交付形态
 
-**A. 便携免安装版**（U 盘直接运行）
+**A. 便携免安装版**（U 盘直接运行；仅本地构建，CI 不产出）
 
 ```bash
 npx tauri build --no-bundle
