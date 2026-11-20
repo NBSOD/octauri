@@ -106,6 +106,15 @@ async function submit() {
           </span>
         </label>
 
+        <label class="check">
+          <input v-model="form.tls12Only" type="checkbox" />
+          兼容模式：仅使用 TLS 1.2（部分老版本 ASA 不兼容 TLS 1.3 时勾选）
+        </label>
+        <span class="hint">
+          仅影响 openconnect 的 OpenSSL 握手：勾选后强制 TLS 1.2，
+          用于服务器直接返回 <code>handshake failure (alert 40)</code> 的场景；默认关闭。
+        </span>
+
         <!-- 密码模式：密码不落盘，连接时输入 -->
         <p v-if="form.authMethod === 'password'" class="hint">
           密码不会保存在本地，也不会写入配置文件。每次连接时弹窗输入，

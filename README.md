@@ -524,6 +524,7 @@ npx tauri build --bundles nsis
 | 日志出现 `certificate verify failed` | 服务端证书不被信任（自签 / 中间证书缺失 / 时钟偏差） | 校时、补全 CA，或谨慎使用 `--servercert pin-sha256:...` |
 | 日志出现 `Login failed` / `401` | 账号密码错误或认证方式不匹配 | 核对凭据；证书模式勿勾选密码 |
 | 日志出现 `GROUP: [a\|b]:` 后认证失败 | Cisco ASA 多组网关要求先选 Group | 连接时会弹窗选择；也可在配置里填写 Group（`--authgroup`） |
+| 日志出现 `SSL alert number 40` / `handshake failure` | 老版本 ASA 不兼容 OpenSSL 默认的 TLS 1.3 ClientHello（Schannel 浏览器能打开、openconnect 失败） | 配置里勾选「兼容模式：仅使用 TLS 1.2」后重试 |
 | 进程不退、端口占用 | openconnect 卡在 teardown | 点「强制终止」（SIGKILL / `taskkill /F /T`） |
 | 退出 Octauri 后仍有 root 进程残留 | 1.0 早期版本退出时未结束 openconnect 子进程 | 已修复：任何退出路径（托盘、Cmd+Q、SIGTERM/SIGINT/SIGHUP）都会先 SIGTERM openconnect，3 秒未退再 SIGKILL。若仍残留可 `sudo pkill -f Octauri.app` |
 | 日志出现 `** Error: The parameters were not valid.` | 原版 vpnc-script 在全隧道下查不到网络服务名（macOS） | 内置脚本已修复。若用自定义 openconnect，DNS 实际已由 scutil 配好，该报错可忽略 |

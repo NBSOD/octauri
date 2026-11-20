@@ -11,6 +11,8 @@ export interface Profile {
   protocol: string;
   /** Cisco ASA 等多组网关的 Group 名（openconnect --authgroup），留空则由服务器提示 */
   authGroup: string;
+  /** 兼容模式：强制 OpenSSL 只使用 TLS 1.2（老 ASA 不兼容 TLS 1.3 时使用） */
+  tls12Only: boolean;
   certificatePath: string;
   keyPath: string;
   extraArgs: string;
@@ -92,6 +94,7 @@ export const emptyProfile = (): Profile => ({
   authMethod: "password",
   protocol: "",
   authGroup: "",
+  tls12Only: false,
   certificatePath: "",
   keyPath: "",
   extraArgs: "",

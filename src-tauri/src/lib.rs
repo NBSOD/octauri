@@ -319,6 +319,7 @@ pub fn run() {
                             auth_method: crate::model::AuthMethod::Password,
                             protocol: String::new(),
                             auth_group: String::new(),
+                            tls12_only: false,
                             certificate_path: String::new(),
                             key_path: String::new(),
                             extra_args: "--scenario=hang".into(),

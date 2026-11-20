@@ -447,6 +447,13 @@ impl Runner {
             // 不弹出控制台黑窗
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             cmd.creation_flags(CREATE_NO_WINDOW);
+            // 兼容模式：部分老 ASA 不认 OpenSSL 默认的 TLS 1.3 ClientHello，
+            // 通过一份临时 OpenSSL 配置把协议锁在 TLS 1.2。
+            if profile.tls12_only {
+                if let Some(cnf) = tls12_openssl_conf() {
+                    cmd.env("OPENSSL_CONF", cnf);
+                }
+            }
         }
 
         let mut child = cmd.spawn().map_err(|e| spawn_error_hint(&e, bin))?;
@@ -723,6 +730,32 @@ impl Runner {
         }
         let _ = terminate(pid, true);
         std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+/// 写入一份仅允许 TLS 1.2 的 OpenSSL 配置，返回路径。
+///
+/// openconnect（OpenSSL 后端）会读取 OPENSSL_CONF 环境变量；
+/// 这样不需要给 openconnect 增加额外命令行参数，也不会影响其它进程。
+#[cfg(windows)]
+fn tls12_openssl_conf() -> Option<PathBuf> {
+    const CNF: &str = "\
+openssl_conf = openssl_init
+[openssl_init]
+ssl_conf = ssl_sect
+[ssl_sect]
+system_default = system_default_sect
+[system_default_sect]
+MinProtocol = TLSv1.2
+MaxProtocol = TLSv1.2
+";
+    let path = std::env::temp_dir().join("octauri-openssl-tls12.cnf");
+    match std::fs::write(&path, CNF) {
+        Ok(()) => Some(path),
+        Err(e) => {
+            eprintln!("[octauri] 写入 OpenSSL 兼容配置失败：{e}");
+            None
+        }
     }
 }
 
