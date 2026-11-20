@@ -57,6 +57,9 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
+          # 缓存按 ref 隔离：tag 运行保存的缓存，其它 tag 读不到，只会白花
+          # ~20–50s 上传时间并让缓存列表膨胀。因此只在 main 上保存，tag 运行只读。
+          save-if: ${{ github.ref_type != 'tag' }}
 
       - name: 安装前端依赖
         run: npm ci
