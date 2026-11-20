@@ -390,7 +390,18 @@ impl Runner {
             ));
         }
 
-        let argv = build_argv(profile, bin, password.is_some());
+        // build_argv 不再注入兼容模式开关：该开关要求 OpenSSL legacy provider
+        // （3DES/RC4）可用，否则 openconnect 会在解析参数阶段直接退出。
+        // Windows 下先实测 provider 能否加载，再决定是否注入。
+        let mut argv = build_argv(profile, bin, password.is_some());
+        #[cfg(windows)]
+        let compat_modules = if profile.tls12_only {
+            self.prepare_compat(app, profile, bin, &mut argv)
+        } else {
+            None
+        };
+        #[cfg(not(windows))]
+        let compat_modules: Option<PathBuf> = None;
 
         // 记录将要执行的命令行，便于运维排障（密码不在其中）
         self.log(
@@ -416,7 +427,81 @@ impl Runner {
             }
         }
 
-        self.start_local(app, profile, bin, &argv, password)
+        self.start_local(app, profile, bin, &argv, password, compat_modules)
+    }
+
+    /// 兼容模式（Windows）：实测 OpenSSL legacy provider 能否加载，再决定是否
+    /// 注入 `--allow-insecure-crypto`。
+    ///
+    /// 该开关是 openconnect 里唯一会打开 `SSL_OP_LEGACY_SERVER_CONNECT` 的路径
+    /// （配置文件里的 `Options` 对它自己 new 出来的 SSL_CTX 无效），但它在解析
+    /// 参数阶段就会检查 3DES/RC4 —— OpenSSL 3 把这两个算法移进了 legacy provider，
+    /// 加载不到就直接 `Cannot enable insecure 3DES or RC4 ciphers` 退出，
+    /// 连服务器都连不上（v1.0.5 的真实反馈）。
+    ///
+    /// 因此先用 `<bin> --allow-insecure-crypto --version` 实测：能加载才注入开关
+    /// 并返回模块目录；全都失败则退回「不加开关」的行为，并把原因写进日志，
+    /// 而不是留一个没有上下文的退出码 1。
+    #[cfg(windows)]
+    fn prepare_compat(
+        &self,
+        app: &AppHandle,
+        profile: &crate::model::Profile,
+        bin: &Path,
+        argv: &mut Vec<String>,
+    ) -> Option<PathBuf> {
+        let manual = profile.extra_args.contains("--allow-insecure-crypto");
+        let mut tried: Vec<String> = Vec::new();
+        for dir in legacy_module_dirs(app, bin) {
+            if !dir.join("legacy.dll").is_file() {
+                continue;
+            }
+            match probe_insecure_crypto(bin, &dir) {
+                Ok(()) => {
+                    self.log(
+                        app,
+                        "app",
+                        &format!(
+                            "兼容模式：OpenSSL legacy provider 已加载（{}）",
+                            dir.display()
+                        ),
+                    );
+                    if !manual {
+                        // 网关固定在末尾，开关插到它前面
+                        let gateway = argv.pop().unwrap_or_default();
+                        argv.push("--allow-insecure-crypto".into());
+                        argv.push(gateway);
+                    }
+                    return Some(dir);
+                }
+                Err(e) => tried.push(format!("{}（{e}）", dir.display())),
+            }
+        }
+        if manual {
+            self.log(
+                app,
+                "app",
+                "兼容模式：额外参数里的 --allow-insecure-crypto 缺少可用的 legacy provider，\
+                 openconnect 会在启动时直接退出；请清空该参数，或改用内置运行时。",
+            );
+        } else if tried.is_empty() {
+            self.log(
+                app,
+                "app",
+                "兼容模式：未找到 ossl-modules/legacy.dll，未启用旧式重协商；\
+                 如仍报 unsafe legacy renegotiation disabled，请使用内置运行时。",
+            );
+        } else {
+            self.log(
+                app,
+                "app",
+                &format!(
+                    "兼容模式：legacy provider 均无法加载，未启用旧式重协商：{}",
+                    tried.join("；")
+                ),
+            );
+        }
+        None
     }
 
     /// 本地直接拉起 openconnect（Windows / Linux，以及 macOS 未启用辅助进程时）。
@@ -427,6 +512,7 @@ impl Runner {
         bin: &Path,
         argv: &[String],
         password: Option<String>,
+        #[allow(unused_variables)] compat_modules: Option<PathBuf>,
     ) -> Result<u32, String> {
         let mut cmd = Command::new(bin);
         cmd.args(argv)
@@ -448,23 +534,14 @@ impl Runner {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             cmd.creation_flags(CREATE_NO_WINDOW);
             // 兼容模式：部分老 ASA 不认 OpenSSL 默认的 TLS 1.3 ClientHello，
-            // 通过一份临时 OpenSSL 配置把协议锁在 TLS 1.2；
-            // 旧式重协商所需的 legacy provider 目录也一并指过去。
+            // 用一份临时 OpenSSL 配置把协议锁在 TLS 1.2；
+            // 旧式重协商所需的 legacy provider 目录由 prepare_compat 实测后给出。
             if profile.tls12_only {
-                let modules = openssl_legacy_modules(bin);
-                if let Some(dir) = &modules {
+                if let Some(dir) = &compat_modules {
                     cmd.env("OPENSSL_MODULES", dir);
                 }
                 if let Some(cnf) = tls12_openssl_conf() {
                     cmd.env("OPENSSL_CONF", cnf);
-                }
-                if modules.is_none() {
-                    self.log(
-                        app,
-                        "app",
-                        "兼容模式：未找到 ossl-modules/legacy.dll，无法启用旧式重协商；\
-                         若仍报 unsafe legacy renegotiation disabled，请使用自带运行时的版本。",
-                    );
                 }
             }
         }
@@ -788,27 +865,70 @@ fn sibling_file(bin: &Path, names: &[&str]) -> Option<PathBuf> {
         .find(|p| p.is_file())
 }
 
-/// 定位 OpenSSL legacy provider 模块目录（仅 Windows 兼容模式需要）。
+/// openconnect 可能存放 OpenSSL legacy provider 的目录（仅 Windows 兼容模式需要）。
 ///
-/// `--allow-insecure-crypto` 启动前会检查 3DES/RC4 是否可用，缺失就直接报错退出；
-/// 这两个算法在 OpenSSL 3 里由 legacy provider 提供，随包附带
-/// `openconnect/ossl-modules/legacy.dll`，通过 `OPENSSL_MODULES` 指过去。
+/// 顺序即优先级：先看内置运行时旁边（`openconnect/ossl-modules`），
+/// 再兼容 MSYS2 布局（`mingw64/bin` + `mingw64/lib/ossl-modules`），
+/// 最后是 App 资源目录里的随包副本。
 ///
-/// 也顺带识别 MSYS2 安装（`mingw64/bin` + `mingw64/lib/ossl-modules`），
-/// 便于用户自备 openconnect 时仍能走通兼容模式。
-/// 找不到时返回 None，调用方必须退回「不传该开关」，否则连接会直接失败。
-fn openssl_legacy_modules(bin: &Path) -> Option<PathBuf> {
-    if !cfg!(windows) {
-        return None;
+/// 是否可用不靠路径判断，而是由 [`probe_insecure_crypto`] 实测，
+/// 因为 ABI 不匹配的模块会存在但加载失败。
+#[cfg(windows)]
+fn legacy_module_dirs(app: &AppHandle, bin: &Path) -> Vec<PathBuf> {
+    let mut dirs = legacy_module_dirs_for(bin);
+    if let Ok(p) = {
+        use tauri::path::BaseDirectory;
+        use tauri::Manager;
+        app.path().resolve("openconnect/ossl-modules", BaseDirectory::Resource)
+    } {
+        if !dirs.contains(&p) {
+            dirs.push(p);
+        }
     }
-    let dir = bin.parent()?;
-    [
+    dirs
+}
+
+/// 只按 `bin` 位置推算的候选目录（纯函数，便于单测）。
+#[cfg(windows)]
+fn legacy_module_dirs_for(bin: &Path) -> Vec<PathBuf> {
+    let Some(dir) = bin.parent() else {
+        return Vec::new();
+    };
+    vec![
         dir.join("ossl-modules"),
         dir.join("..").join("lib").join("ossl-modules"),
         dir.join("..").join("ossl-modules"),
     ]
-    .into_iter()
-    .find(|d| d.join("legacy.dll").is_file())
+}
+
+/// 用 `<bin> --allow-insecure-crypto --version` 实测 legacy provider 能否加载。
+///
+/// `--version` 也会走一遍参数解析，因此能触发 openconnect 的 3DES/RC4 检查：
+/// 加载失败时它打印 `Cannot enable insecure 3DES or RC4 ciphers` 并以 1 退出。
+/// 注意 openconnect 的 `--version` 正常退出码也是 1，所以只能看输出。
+#[cfg(windows)]
+fn probe_insecure_crypto(bin: &Path, modules: &Path) -> Result<(), String> {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+    let out = Command::new(bin)
+        .args(["--allow-insecure-crypto", "--version"])
+        .env("OPENSSL_MODULES", modules)
+        .env("LC_ALL", "C")
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| format!("无法执行探测：{e}"))?;
+    let stdout = String::from_utf8_lossy(&out.stdout).to_lowercase();
+    if stdout.contains("openconnect") {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    Err(stderr
+        .lines()
+        .next()
+        .unwrap_or("无输出")
+        .trim()
+        .to_string())
 }
 
 /// 定位 openconnect 同目录下的 vpnc-script。
@@ -1021,18 +1141,8 @@ fn build_argv(
     if let Some(ca) = sibling_file(bin, &["ca-bundle.pem", "ca-certificates.crt"]) {
         a.push(format!("--cafile={}", ca.display()));
     }
-    // 兼容模式：老 ASA 既要求 SECLEVEL=0，也不支持 RFC 5746 安全重协商。
-    // 前者靠 OPENSSL_CONF（见 tls12_openssl_conf）解决，后者只有
-    // --allow-insecure-crypto 才会让 openconnect 调用
-    // SSL_CTX_set_options(SSL_OP_LEGACY_SERVER_CONNECT)。
-    // 该开关要求 legacy provider 可用，否则 openconnect 直接报错退出，
-    // 因此仅在随包模块存在时添加；用户在额外参数里自带时不要重复。
-    if profile.tls12_only
-        && openssl_legacy_modules(bin).is_some()
-        && !profile.extra_args.contains("--allow-insecure-crypto")
-    {
-        a.push("--allow-insecure-crypto".into());
-    }
+    // 兼容模式的 --allow-insecure-crypto 不在这里加：它取决于 legacy provider
+    // 能否真的加载（见 Runner::prepare_compat，运行时会实测）。
     a.extend(split_args(&profile.extra_args));
     // 网关必须位于参数末尾
     a.push(profile.gateway.clone());
@@ -1229,15 +1339,13 @@ mod tests {
     /// 随包 legacy provider 存在时添加。
     #[cfg(windows)]
     #[test]
-    fn compat_mode_enables_insecure_crypto_only_with_legacy_provider() {
-        use super::{build_argv, openssl_legacy_modules};
+    fn compat_flag_is_injected_only_after_provider_probe() {
+        use super::build_argv;
         use crate::model::{AuthMethod, Profile};
 
-        let dir = std::env::temp_dir().join("octauri-test-legacy-provider");
-        let bin = dir.join("openconnect.exe");
-        std::fs::create_dir_all(dir.join("ossl-modules")).unwrap();
-        std::fs::write(&bin, b"").unwrap();
-        let _ = std::fs::remove_file(dir.join("ossl-modules").join("legacy.dll"));
+        let bin = std::env::temp_dir()
+            .join("octauri-test-legacy-provider")
+            .join("openconnect.exe");
 
         let profile = Profile {
             id: "t".into(),
@@ -1257,21 +1365,22 @@ mod tests {
             updated_at: 0,
         };
 
-        // 没有 legacy.dll：不能加开关，否则 openconnect 会直接退出
-        assert!(openssl_legacy_modules(&bin).is_none());
-        assert!(!build_argv(&profile, &bin, true)
-            .iter()
-            .any(|a| a == "--allow-insecure-crypto"));
+        // build_argv 是纯函数，不能替运行时做决定：--allow-insecure-crypto 只在
+        // prepare_compat 实测 legacy provider 可加载后才注入，否则 openconnect
+        // 会在参数解析阶段就报 Cannot enable insecure 3DES or RC4 ciphers 退出。
+        let argv = build_argv(&profile, &bin, true);
+        assert!(!argv.iter().any(|a| a == "--allow-insecure-crypto"));
+    }
 
-        // 有 legacy.dll：加上开关，旧式重协商才会被允许
-        std::fs::write(dir.join("ossl-modules").join("legacy.dll"), b"").unwrap();
-        assert_eq!(
-            openssl_legacy_modules(&bin).unwrap(),
-            dir.join("ossl-modules")
-        );
-        assert!(build_argv(&profile, &bin, true)
-            .iter()
-            .any(|a| a == "--allow-insecure-crypto"));
+    /// 模块目录的候选顺序：同目录 ossl-modules 优先（随包布局），其后是 MSYS2 布局。
+    #[cfg(windows)]
+    #[test]
+    fn legacy_module_dir_candidates_prefer_sibling_ossl_modules() {
+        let bin = std::path::Path::new(r"C:\Octauri\openconnect\openconnect.exe");
+        let dirs = super::legacy_module_dirs_for(bin);
+        assert_eq!(dirs.len(), 3);
+        assert!(dirs[0].to_string_lossy().ends_with(r"openconnect\ossl-modules"));
+        assert!(dirs[1].to_string_lossy().ends_with(r"lib\ossl-modules"));
     }
 
     /// 中文输出不应被误判为成功——这正是本次缺陷的成因，
