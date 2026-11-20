@@ -243,6 +243,7 @@ pub fn run() {
 
     let app = builder
         .plugin(tauri_plugin_dialog::init())
+            .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             if let Some(listener) = instance_listener.take() {
                 let handle = app.handle().clone();
