@@ -50,6 +50,10 @@ try {
 
     # 只拷文件，避免把 macos-arm64 子目录带进 Windows 包
     Get-ChildItem 'src-tauri\resources\openconnect' -File | Copy-Item -Destination "$dist\openconnect\"
+    # 兼容模式需要的 OpenSSL legacy provider（3DES/RC4，给 --allow-insecure-crypto 用）
+    if (Test-Path 'src-tauri\resources\openconnect\ossl-modules') {
+        Copy-Item 'src-tauri\resources\openconnect\ossl-modules' "$dist\openconnect\" -Recurse
+    }
 
     @'
 Octauri Windows 便携版（测试构建）

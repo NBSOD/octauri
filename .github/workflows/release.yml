@@ -64,6 +64,11 @@ jobs:
           if [ -f "src-tauri/resources/openconnect/openconnect.exe" ]; then
             echo "✅ 已找到内置 openconnect.exe"
             ls -la src-tauri/resources/openconnect/
+            # 兼容模式要给 openconnect 传 --allow-insecure-crypto，而该开关
+            # 要求 3DES/RC4 可用；OpenSSL 3 只在 legacy provider 里提供它们。
+            test -f src-tauri/resources/openconnect/ossl-modules/legacy.dll \
+              || { echo "::error::缺少 ossl-modules/legacy.dll，兼容模式将报 Cannot enable insecure 3DES or RC4 ciphers"; exit 1; }
+            echo "✅ legacy provider $(stat -c%s src-tauri/resources/openconnect/ossl-modules/legacy.dll) bytes"
           else
             echo "::warning::src-tauri/resources/openconnect/openconnect.exe 不存在，本次产物将不含内置 openconnect，用户需自行指定路径。"
           fi

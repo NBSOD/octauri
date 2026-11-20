@@ -112,9 +112,11 @@ async function submit() {
         </label>
         <span class="hint">
           勾选后强制 TLS 1.2，并允许静态 RSA、旧式重协商等老设备特性
-          （OpenSSL SECLEVEL=0 + LEGACY_SERVER_CONNECT），
-          用于服务器返回 <code>handshake failure (alert 40)</code> 或
-          <code>unsafe legacy renegotiation disabled</code> 的场景；默认关闭。
+          （openconnect 的 <code>--allow-insecure-crypto</code>，含 SECLEVEL=0 与
+          LEGACY_SERVER_CONNECT），用于服务器返回
+          <code>handshake failure (alert 40)</code> 或
+          <code>unsafe legacy renegotiation disabled</code> 的场景；默认关闭，
+          会降低连接的安全强度，请仅在老设备上启用。
         </span>
 
         <!-- 密码模式：密码不落盘，连接时输入 -->

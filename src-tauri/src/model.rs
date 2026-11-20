@@ -36,8 +36,8 @@ pub struct Profile {
     /// 留空时 openconnect 会提示 GROUP，程序会弹出选择框。
     #[serde(default)]
     pub auth_group: String,
-    /// 兼容模式：强制 OpenSSL 只使用 TLS 1.2。
-    /// 部分老版本 ASA 不兼容 TLS 1.3 ClientHello，会直接回 handshake_failure。
+    /// 兼容模式：老 ASA 专用。强制 TLS 1.2（部分老设备不认 TLS 1.3 ClientHello），
+    /// 并附加 `--allow-insecure-crypto`（SECLEVEL=0 + 允许旧式重协商）。
     #[serde(default)]
     pub tls12_only: bool,
     /// 证书认证：客户端证书路径 (PEM)

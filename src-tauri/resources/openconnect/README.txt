@@ -7,6 +7,12 @@ This directory holds the bundled openconnect runtime.
                        来源：https://www.wintun.net/  请勿改名或修改
   wintun-license.txt   上面的 DLL 附带的 Prebuilt Binaries License
   wintun-README.md     Wintun 官方集成说明
+  ossl-modules/legacy.dll
+                       OpenSSL 3 的 legacy provider（提供 3DES/RC4）。
+                       兼容模式会给 openconnect 传 --allow-insecure-crypto，
+                       它在启动前检查 3DES/RC4 是否可用，缺失就直接报错退出
+                       （Cannot enable insecure 3DES or RC4 ciphers）。
+                       版本必须与 libcrypto-3-x64.dll 一致（当前 3.6.5）。
 
 === 仍需自行放置 / You still need to add ===
 
