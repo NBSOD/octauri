@@ -223,6 +223,19 @@ CI 用矩阵在 macOS 与 Windows 两个原生 runner 上分别构建（Linux �
 - 推送 tag：`git tag v1.0.0 && git push origin v1.0.0` → 构建并创建**草稿** release，dmg / exe 附在 release 上；
 - 手动触发：仓库 Actions 页 → build → Run workflow → 产物在本次运行的 Artifacts 中下载（不创建 release）。
   Artifact 内的文件是**扁平**的（`Octauri_x.y.z_x64-setup.exe` / `Octauri_x.y.z_aarch64.dmg` 直接在压缩包根目录），不会再出现 `release/bundle/nsis/...` 长路径。
+- 推送 `main`：只构建、不发布，用来**喂热 Rust 缓存**。原因见下。
+
+> **为什么要给 main 也构建一次**
+>
+> GitHub Actions 的缓存按 ref 隔离：`refs/tags/v1.0.7` 存的缓存，`refs/tags/v1.0.8`
+> 的运行**读不到**；只有默认分支（main）的缓存对所有 tag 可见。此前 workflow 只在
+> tag 上触发，于是每次发版都是冷编译——实测 v1.0.7 的 Windows 任务 5m26s 里，
+> 5m04s 全耗在 `Updating crates.io index` + 全量 `cargo build` 上（NSIS 打包只占约
+> 20 秒）。现在 push 到 main 会先构建一次（不发布），tag 运行时即可恢复 main 的缓存
+> 做增量编译。
+>
+> 想让某次发版更快：先 push main、等它跑完（缓存落盘），再 push tag。
+> 同一 ref 的重复运行只保留最新一次（`concurrency`），tag 运行不会被取消。
 
 **前置条件：Windows 运行时必须入库**
 

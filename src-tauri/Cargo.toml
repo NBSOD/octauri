@@ -1,6 +1,6 @@
 [package]
 name = "octauri"
-version = "1.0.8"
+version = "1.0.9"
 description = "Octauri - a thin shell client for the openconnect CLI"
 authors = ["Octauri Contributors"]
 license = "GPL-3.0-or-later"

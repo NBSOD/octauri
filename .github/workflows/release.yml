@@ -4,10 +4,22 @@ on:
   push:
     tags:
       - "v*"
+    # 每次 push 到 main 也构建一次，但只构建、不发布。
+    # 目的：GitHub Actions 的缓存按 ref 隔离，tag 之间互相看不到对方的缓存，
+    # 所以「只在 tag 上构建」等于每次发版都冷编译（实测 Windows 5m26s 里 5m04s
+    # 全是 cargo 编译）。默认分支（main）的缓存对所有 tag 可见，因此先在 main
+    # 上把缓存喂热，tag 运行时就能走增量编译。
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
   contents: write
+
+# 同一 ref 的重复运行只保留最新一次；tag 运行永不取消（避免打断发布）。
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   build:
@@ -111,14 +123,14 @@ jobs:
           printf 'APPLE_PASSWORD=%s\n' "$APPLE_APP_PASS" >> "$GITHUB_ENV"
           printf 'APPLE_TEAM_ID=%s\n' "$TEAM" >> "$GITHUB_ENV"
 
-      # 有 tag 时创建草稿 release；手动触发时只构建并上传 artifact
+      # 有 tag 时创建草稿 release；push 到 main / 手动触发时只构建并上传 artifact
       - name: 构建并打包
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
-          releaseName: "Octauri ${{ github.ref_name }}"
+          releaseName: ${{ github.ref_type == 'tag' && format('Octauri {0}', github.ref_name) || '' }}
           releaseBody: >-
             macOS 产物为 .dmg（未签名，首次打开需右键 →「打开」，或执行
             xattr -dr com.apple.quarantine /Applications/Octauri.app）；

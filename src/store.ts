@@ -311,7 +311,36 @@ export async function exportProfiles(path: string, ids: string[]) {
   }
 }
 
-/** 用户确认信任该服务器证书：写入配置后立即重连 */
+/** 一个配置最多记住几个服务器证书指纹（与后端 MAX_SERVERCERT_PINS 保持一致） */
+const MAX_SERVERCERT_PINS = 8;
+
+/**
+ * 解析配置里的指纹列表。分隔符支持 `,` / `;` / 换行，兼容旧版单指纹数据。
+ *
+ * 背景：同一套 ASA 集群的多个节点会各自签发自签名证书（实测两个节点证书
+ * 完全不同），单指纹配置在 DNS 切换节点后会报
+ * “None of the 1 fingerprint(s) specified via --servercert match”。
+ */
+export function parseServercertPins(raw: string): string[] {
+  const out: string[] = [];
+  for (const part of (raw ?? "").split(/[,;\r\n]/)) {
+    const pin = part.trim();
+    if (!pin.startsWith("pin-sha256:") || out.includes(pin)) continue;
+    out.push(pin);
+    if (out.length >= MAX_SERVERCERT_PINS) break;
+  }
+  return out;
+}
+
+/** 把新指纹并入列表：已存在不重复，超出上限时丢最旧的。 */
+function mergeServercertPin(raw: string, pin: string): string {
+  const pins = parseServercertPins(raw);
+  const next = pin.trim();
+  if (next.startsWith("pin-sha256:") && !pins.includes(next)) pins.push(next);
+  return pins.slice(-MAX_SERVERCERT_PINS).join(",");
+}
+
+/** 用户确认信任该服务器证书：追加进信任列表后立即重连 */
 export async function trustServerCert() {
   const prompt = state.certPrompt;
   if (!prompt) return;
@@ -319,7 +348,10 @@ export async function trustServerCert() {
   const p = state.profiles.find((x) => x.id === prompt.profileId);
   if (!p) return;
   const password = takePendingCredential(p.id);
-  const saved = await saveProfile({ ...p, servercert: prompt.pin });
+  const saved = await saveProfile({
+    ...p,
+    servercert: mergeServercertPin(p.servercert, prompt.pin),
+  });
   if (!saved) return;
   // 缓存已过期或不存在（证书模式除外）时，重新弹密码框，而不是发起必然失败的连接
   if (password === undefined && saved.authMethod === "password") {

@@ -54,6 +54,9 @@ pub struct Profile {
     pub openconnect_path: String,
     /// 固定信任的服务器证书指纹（形如 pin-sha256:xxx）。
     /// 为空表示走正常 CA 校验；企业自签证书场景下由用户确认后写入。
+    ///
+    /// 一个配置可以存多个指纹（Cisco ASA 集群各节点自签证书不同）：
+    /// 用 `,` / `;` / 换行分隔，见 [`parse_servercert_pins`]。
     #[serde(default)]
     pub servercert: String,
     #[serde(default)]
@@ -62,7 +65,51 @@ pub struct Profile {
     pub updated_at: i64,
 }
 
+pub const MAX_SERVERCERT_PINS: usize = 8;
+
+/// 一个配置最多记住几个服务器证书指纹。
+///
+/// 现实场景：同一套 ASA 集群有多个节点，各自签发自签名证书（实测
+/// `111.207.107.182` 与 `120.246.122.253` 就是两张不同的证书），DNS 换节点后
+/// 单指纹配置会报 “None of the 1 fingerprint(s) … match”。因此允许存多个。
+///
+/// 存储格式兼容旧数据：分隔符可以是 `,` / `;` / 换行。
+pub fn parse_servercert_pins(raw: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for part in raw.split([',', ';', '\n', '\r']) {
+        let pin = part.trim();
+        if pin.is_empty() || !pin.starts_with("pin-sha256:") {
+            continue;
+        }
+        if !out.iter().any(|p| p == pin) {
+            out.push(pin.to_string());
+        }
+        if out.len() >= MAX_SERVERCERT_PINS {
+            break;
+        }
+    }
+    out
+}
+
+/// 把新指纹并入已有列表（去重、保留顺序、超出上限时丢最旧的）。
+pub fn merge_servercert_pin(raw: &str, pin: &str) -> String {
+    let pin = pin.trim();
+    let mut pins = parse_servercert_pins(raw);
+    if pin.starts_with("pin-sha256:") && !pins.iter().any(|p| p == pin) {
+        pins.push(pin.to_string());
+        while pins.len() > MAX_SERVERCERT_PINS {
+            pins.remove(0);
+        }
+    }
+    pins.join(",")
+}
+
 impl Profile {
+    /// 当前配置信任的服务器指纹列表（可能是 0 个、1 个或多个）。
+    pub fn servercert_pins(&self) -> Vec<String> {
+        parse_servercert_pins(&self.servercert)
+    }
+
     pub fn trimmed(&self) -> Profile {
         let mut p = self.clone();
         p.id = p.id.trim().to_string();
@@ -197,4 +244,50 @@ pub struct CertPrompt {
 pub struct GroupPrompt {
     pub profile_id: String,
     pub groups: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{merge_servercert_pin, parse_servercert_pins, MAX_SERVERCERT_PINS};
+
+    const A: &str = "pin-sha256:QFB4j7hu+kmQl6cR0pVG0PDbpWJ/GrCQYy/LQMl8Fuo=";
+    const B: &str = "pin-sha256:ND4VHihkwlq8W0OAXhm5TpjbO4V0Suv0IxXO3ejyuqw=";
+
+    #[test]
+    fn parses_single_and_multiple_pins() {
+        assert_eq!(parse_servercert_pins(""), Vec::<String>::new());
+        assert_eq!(parse_servercert_pins(A), vec![A.to_string()]);
+        assert_eq!(
+            parse_servercert_pins(&format!("{A},{B}")),
+            vec![A.to_string(), B.to_string()]
+        );
+        // 分号/换行也算分隔符，兼容手写配置
+        assert_eq!(
+            parse_servercert_pins(&format!("{A}; {B}\n")),
+            vec![A.to_string(), B.to_string()]
+        );
+        // 非指纹内容忽略，重复项去掉
+        assert_eq!(
+            parse_servercert_pins(&format!("garbage,{A},{A}")),
+            vec![A.to_string()]
+        );
+    }
+
+    #[test]
+    fn merge_appends_dedupes_and_caps() {
+        assert_eq!(merge_servercert_pin("", A), A);
+        assert_eq!(merge_servercert_pin(A, A), A);
+        assert_eq!(merge_servercert_pin(A, B), format!("{A},{B}"));
+
+        // 超过上限时丢最旧的
+        let mut raw = String::new();
+        for i in 0..MAX_SERVERCERT_PINS {
+            raw = merge_servercert_pin(&raw, &format!("pin-sha256:old{i}"));
+        }
+        let merged = merge_servercert_pin(&raw, "pin-sha256:new");
+        let pins = parse_servercert_pins(&merged);
+        assert_eq!(pins.len(), MAX_SERVERCERT_PINS);
+        assert_eq!(pins.last().unwrap(), "pin-sha256:new");
+        assert!(!pins.contains(&"pin-sha256:old0".to_string()));
+    }
 }

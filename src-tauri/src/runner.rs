@@ -1133,10 +1133,13 @@ fn build_argv(
     if !profile.auth_group.is_empty() {
         a.push(format!("--authgroup={}", profile.auth_group));
     }
-    // 用户已确认过的服务器证书指纹：跳过 CA 校验但绑定到该证书，
-    // 比无条件信任安全（证书更换后会再次询问）
-    if !profile.servercert.is_empty() {
-        a.push(format!("--servercert={}", profile.servercert));
+    // 用户已确认过的服务器证书指纹：跳过 CA 校验但绑定到这些证书，
+    // 比无条件信任安全（证书更换后会再次询问）。
+    // 一个配置可存多个指纹（ASA 集群各节点自签证书不同）；openconnect 的
+    // `--servercert` 只接受单个指纹，多指纹必须拆成多个参数 —— 实测用
+    // 逗号/分号拼在一起会被当成一个指纹，报 "None of the 1 fingerprint(s)"。
+    for pin in profile.servercert_pins() {
+        a.push(format!("--servercert={pin}"));
     }
     // 内置运行时会自带 vpnc-script，显式传入以免依赖系统默认路径
     // （openconnect 默认只在 /etc/vpnc/vpnc-script 与 PATH 中查找）
@@ -1378,6 +1381,41 @@ mod tests {
         // 会在参数解析阶段就报 Cannot enable insecure 3DES or RC4 ciphers 退出。
         let argv = build_argv(&profile, &bin, true);
         assert!(!argv.iter().any(|a| a == "--allow-insecure-crypto"));
+    }
+
+    /// 多指纹：openconnect 的 `--servercert` 只接受一个指纹，逗号/分号拼在一起
+    /// 会被当成单个指纹（实测报 "None of the 1 fingerprint(s)"），必须拆成多个参数。
+    #[test]
+    fn build_argv_emits_one_servercert_per_pin() {
+        use super::build_argv;
+        use crate::model::{AuthMethod, Profile};
+
+        let profile = Profile {
+            id: "t".into(),
+            name: "t".into(),
+            gateway: "vpn.example.com".into(),
+            username: "u".into(),
+            auth_method: AuthMethod::Password,
+            protocol: "anyconnect".into(),
+            auth_group: String::new(),
+            tls12_only: false,
+            certificate_path: String::new(),
+            key_path: String::new(),
+            extra_args: String::new(),
+            openconnect_path: String::new(),
+            servercert: "pin-sha256:AAA,pin-sha256:BBB".into(),
+            created_at: 0,
+            updated_at: 0,
+        };
+        let argv = build_argv(&profile, std::path::Path::new("openconnect"), false);
+        let pins: Vec<&String> = argv
+            .iter()
+            .filter(|a| a.starts_with("--servercert="))
+            .collect();
+        assert_eq!(
+            pins,
+            vec!["--servercert=pin-sha256:AAA", "--servercert=pin-sha256:BBB"]
+        );
     }
 
     /// 模块目录的候选顺序：同目录 ossl-modules 优先（随包布局），其后是 MSYS2 布局。
