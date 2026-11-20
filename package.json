@@ -1,7 +1,7 @@
 {
   "name": "octauri",
   "private": true,
-  "version": "1.0.3",
+  "version": "1.0.4",
   "type": "module",
   "description": "OpenConnect 图形客户端（openconnect 命令行外壳）",
   "license": "GPL-3.0-or-later",
@@ -29,3 +29,4 @@
     "vue-tsc": "^2.2.0"
   }
 }
+

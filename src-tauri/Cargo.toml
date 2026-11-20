@@ -1,6 +1,6 @@
 [package]
 name = "octauri"
-version = "1.0.3"
+version = "1.0.4"
 description = "Octauri - a thin shell client for the openconnect CLI"
 authors = ["Octauri Contributors"]
 license = "GPL-3.0-or-later"
@@ -49,3 +49,4 @@ lto = true
 opt-level = "s"
 panic = "abort"
 strip = true
+
