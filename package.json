@@ -1,7 +1,7 @@
 {
   "name": "octauri",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.0.2",
   "type": "module",
   "description": "OpenConnect 图形客户端（openconnect 命令行外壳）",
   "license": "GPL-3.0-or-later",
