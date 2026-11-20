@@ -6,6 +6,29 @@ use crate::model::EnvReport;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+/// 还原 Windows verbatim 路径前缀（`\\?\D:\...` / `\\?\UNC\...`）。
+///
+/// Tauri 在 Windows 上解析资源目录时会给出 verbatim 形式。这类路径**不接受**
+/// 前斜杠，而 OpenSSL 拼 provider 模块路径时用的是 `%s/%s.dll`，于是
+/// `OPENSSL_MODULES=\\?\D:\...\ossl-modules` 永远加载不到 `legacy.dll`，
+/// openconnect 随之报 `Cannot enable insecure 3DES or RC4 ciphers`；
+/// openconnect 自己的 `--cafile` 解析同样受影响。
+///
+/// 因此凡是要交给 openconnect（子进程 argv / 环境变量）的路径，都先过这里。
+pub fn plain_path(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let s = path.to_string_lossy();
+        if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = s.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    path.to_path_buf()
+}
+
 /// 探测 openconnect 可执行文件与运行环境。
 ///
 /// `resource_openconnect` 为打包内置的 openconnect 路径（仅 Windows 使用，
@@ -29,10 +52,13 @@ pub fn probe(resource_openconnect: Option<PathBuf>, override_path: Option<&str>)
         candidates.push(p);
     }
 
-    // 去重并只保留真实存在的文件
+    // 去重并只保留真实存在的文件。注意先还原 `\\?\` 前缀：这个字符串会被
+    // 直接交给 openconnect（argv / OPENSSL_MODULES），verbatim 路径会让
+    // OpenSSL 的模块加载与 cafile 读取失败。
     let mut seen = std::collections::HashSet::new();
     let mut existing: Vec<String> = Vec::new();
     for c in candidates {
+        let c = plain_path(&c);
         let key = c.to_string_lossy().to_string();
         if !seen.insert(key.clone()) {
             continue;
@@ -320,4 +346,28 @@ fn detect_tun(openconnect: Option<&str>) -> (bool, String) {
         false,
         "未找到 wintun.dll（详见 wintun 检测结果）。".into(),
     )
+}
+#[cfg(test)]
+mod tests {
+    use super::plain_path;
+    use std::path::{Path, PathBuf};
+
+    /// Tauri 的资源路径是 `\\?\D:\...` 形式；带这个前缀交给 openconnect 后，
+    /// OpenSSL 用 `/` 拼模块路径就失效（legacy provider 加载不到）。
+    #[cfg(windows)]
+    #[test]
+    fn strips_windows_verbatim_prefix() {
+        assert_eq!(
+            plain_path(Path::new(r"\\?\D:\Program Files\Octauri\openconnect\openconnect.exe")),
+            PathBuf::from(r"D:\Program Files\Octauri\openconnect\openconnect.exe")
+        );
+        assert_eq!(
+            plain_path(Path::new(r"\\?\UNC\server\share\oc.exe")),
+            PathBuf::from(r"\\server\share\oc.exe")
+        );
+        assert_eq!(
+            plain_path(Path::new(r"D:\already\plain.exe")),
+            PathBuf::from(r"D:\already\plain.exe")
+        );
+    }
 }

@@ -380,6 +380,12 @@ impl Runner {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
 
+        // Windows：Tauri 资源路径带 `\\?\` verbatim 前缀。这个前缀下的路径不能
+        // 含 `/`，会让 OpenSSL 加载 legacy provider、openconnect 读取 cafile 失败，
+        // 因此交给子进程前统一还原成普通路径。
+        let bin_plain = crate::probe::plain_path(bin);
+        let bin: &Path = bin_plain.as_path();
+
         if self.running_pid().is_some() {
             return Err("已有连接在进行中，请先断开".into());
         }
@@ -881,6 +887,7 @@ fn legacy_module_dirs(app: &AppHandle, bin: &Path) -> Vec<PathBuf> {
         use tauri::Manager;
         app.path().resolve("openconnect/ossl-modules", BaseDirectory::Resource)
     } {
+        let p = crate::probe::plain_path(&p);
         if !dirs.contains(&p) {
             dirs.push(p);
         }
@@ -894,6 +901,7 @@ fn legacy_module_dirs_for(bin: &Path) -> Vec<PathBuf> {
     let Some(dir) = bin.parent() else {
         return Vec::new();
     };
+    let dir = crate::probe::plain_path(dir);
     vec![
         dir.join("ossl-modules"),
         dir.join("..").join("lib").join("ossl-modules"),
