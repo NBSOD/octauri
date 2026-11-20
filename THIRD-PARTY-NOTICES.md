@@ -64,6 +64,19 @@ OpenConnect 正是通过 `wintun.h` 的 API 加载 `wintun.dll`，因此随包�
 | 说明 | 该脚本负责写入路由与 DNS |
 | 修改 | **有修改**：两处 `networksetup -setdnsservers` 调用前增加空服务名判断（行尾标注 `# Octauri patch`）。全隧道 VPN 下默认路由指向 utun，查出的服务名为空，原脚本会报 `** Error: The parameters were not valid.`。修改由 `scripts/bundle-openconnect-macos.sh` 自动施加，可重复执行。依 LGPL-2.1 第 2 条，修改后的文件已标注修改说明 |
 
+### 1.4 OpenSSL 3.6.5 运行时（Windows 内置）
+
+| 项 | 内容 |
+| --- | --- |
+| 位置 | `src-tauri/resources/openconnect/libssl-3-x64.dll`、`libcrypto-3-x64.dll`、`ossl-modules/legacy.dll` |
+| 许可证 | **Apache-2.0** |
+| 版权 | Copyright © 1998-2025 The OpenSSL Project Authors |
+| 来源 | MSYS2 mingw64 的 `openssl` 3.6.5 包（与内置 openconnect Windows 构建同一工具链） |
+| 用途 | openconnect 的 TLS 后端。`legacy.dll` 是 OpenSSL 3 的 **legacy provider**，提供 3DES/RC4，供兼容模式的 `--allow-insecure-crypto` 使用（老 Cisco ASA 需要允许旧式重协商） |
+
+`legacy.dll` 的版本必须与同目录的 `libcrypto-3-x64.dll` 一致（当前 3.6.5）；
+不一致或缺失时 openconnect 会报 `Cannot enable insecure 3DES or RC4 ciphers` 并退出。
+
 ---
 
 ## 2. 直接依赖（构建期，随二进制链接）
