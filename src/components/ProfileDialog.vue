@@ -111,8 +111,10 @@ async function submit() {
           兼容模式：TLS 1.2 + 允许旧加密套件（老 ASA 用）
         </label>
         <span class="hint">
-          勾选后强制 TLS 1.2，并允许静态 RSA 等旧套件（OpenSSL SECLEVEL=0），
-          用于服务器直接返回 <code>handshake failure (alert 40)</code> 的老设备；默认关闭。
+          勾选后强制 TLS 1.2，并允许静态 RSA、旧式重协商等老设备特性
+          （OpenSSL SECLEVEL=0 + LEGACY_SERVER_CONNECT），
+          用于服务器返回 <code>handshake failure (alert 40)</code> 或
+          <code>unsafe legacy renegotiation disabled</code> 的场景；默认关闭。
         </span>
 
         <!-- 密码模式：密码不落盘，连接时输入 -->

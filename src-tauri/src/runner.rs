@@ -736,7 +736,8 @@ impl Runner {
 /// 写入一份兼容老 ASA 的 OpenSSL 配置，返回路径。
 ///
 /// 这类 ASA 只接受静态 RSA 密钥交换的旧套件（如 AES128-SHA），
-/// OpenSSL 3 默认安全级别会禁用它，因此必须配合 SECLEVEL=0。
+/// 且通常不带 RFC 5746 安全重协商扩展；OpenSSL 3 默认两者都拒绝，
+/// 因此需要 SECLEVEL=0 + LEGACY_SERVER_CONNECT。
 #[cfg(windows)]
 fn tls12_openssl_conf() -> Option<PathBuf> {
     const CNF: &str = "\
@@ -749,6 +750,7 @@ system_default = system_default_sect
 MinProtocol = TLSv1.2
 MaxProtocol = TLSv1.2
 CipherString = DEFAULT@SECLEVEL=0
+Options = LEGACY_SERVER_CONNECT
 ";
     let path = std::env::temp_dir().join("octauri-openssl-tls12.cnf");
     match std::fs::write(&path, CNF) {
