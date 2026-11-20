@@ -220,7 +220,7 @@ CI 用矩阵在 macOS 与 Windows 两个原生 runner 上分别构建（Linux �
 
 **触发方式**
 
-- 推送 tag：`git tag v1.0.0 && git push origin v1.0.0` → 构建并创建**草稿** release，dmg / exe 附在 release 上；
+- 推送 tag：`git tag v1.0.0 && git push origin v1.0.0` → 构建后**自动发布** release（不再留草稿），dmg / exe 直接附在 release 上；
 - 手动触发：仓库 Actions 页 → build → Run workflow → 产物在本次运行的 Artifacts 中下载（不创建 release）。
   Artifact 内的文件是**扁平**的（`Octauri_x.y.z_x64-setup.exe` / `Octauri_x.y.z_aarch64.dmg` 直接在压缩包根目录），不会再出现 `release/bundle/nsis/...` 长路径。
 - 推送 `main`：只构建、不发布，用来**喂热 Rust 缓存**。原因见下。
