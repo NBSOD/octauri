@@ -733,10 +733,10 @@ impl Runner {
     }
 }
 
-/// 写入一份仅允许 TLS 1.2 的 OpenSSL 配置，返回路径。
+/// 写入一份兼容老 ASA 的 OpenSSL 配置，返回路径。
 ///
-/// openconnect（OpenSSL 后端）会读取 OPENSSL_CONF 环境变量；
-/// 这样不需要给 openconnect 增加额外命令行参数，也不会影响其它进程。
+/// 这类 ASA 只接受静态 RSA 密钥交换的旧套件（如 AES128-SHA），
+/// OpenSSL 3 默认安全级别会禁用它，因此必须配合 SECLEVEL=0。
 #[cfg(windows)]
 fn tls12_openssl_conf() -> Option<PathBuf> {
     const CNF: &str = "\
@@ -748,6 +748,7 @@ system_default = system_default_sect
 [system_default_sect]
 MinProtocol = TLSv1.2
 MaxProtocol = TLSv1.2
+CipherString = DEFAULT@SECLEVEL=0
 ";
     let path = std::env::temp_dir().join("octauri-openssl-tls12.cnf");
     match std::fs::write(&path, CNF) {
